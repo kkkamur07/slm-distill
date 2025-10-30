@@ -7,31 +7,31 @@ names:
 
 # Models
 teacher:
-  name: "ai4bharat/indic-bert"
+  name: "FacebookAI/xlm-roberta-base"
 
 student:
-  layers: 2
+  layers: 4
   hidden_size: 128
-  embedding_size: 32
-  heads: 2
-  intermediate: 256
+  embedding_size: 64
+  heads: 4
+  intermediate: 512
 
 # Data
 data:
   data_path: "data/hin/cleaned_data.parquet"
   train_split: 0.95  # 95% train, 5% eval
-  max_length: 128
+  max_length: 256
 
 # Training
 training:
-  temperature: 2.0
-  alpha: 0.4
+  temperature: 2.5
+  alpha: 0.65
   learning_rate: 3e-4
-  batch_size: 32
-  grad_accum: 2 # Effective batch size 64
+  batch_size: 12
+  grad_accum: 4 # Effective batch size 64
   num_epochs: 4
   weight_decay: 0.01
-  warmup_ratio: 0.06
+  warmup_ratio: 0.1
 
 # Hardware
 hardware:

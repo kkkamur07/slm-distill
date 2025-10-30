@@ -135,7 +135,7 @@ def main(cfg: DictConfig):
     teacher, tokenizer = load_teacher_model(cfg.teacher.name, cfg.hardware.device)
     
     student = create_student_model(
-        vocab_size=tokenizer.vocab_size,
+        tokenizer=tokenizer,
         embedding_size=cfg.student.embedding_size,
         layers=cfg.student.layers,
         hidden_size=cfg.student.hidden_size,
