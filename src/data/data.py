@@ -1,51 +1,41 @@
-"""Data loading and preprocessing for Sangraha dataset"""
+"""Data loading and preprocessing for custom parquet dataset"""
 
-from datasets import load_dataset
+from datasets import Dataset
 from torch.utils.data import DataLoader
 from transformers import DataCollatorForLanguageModeling
+import pandas as pd
 
 
 def prepare_datasets(
-    dataset_name: str,
-    subset_name: str,
-    data_percent: float,
+    data_path: str,
     tokenizer,
     max_length: int,
     batch_size: int,
+    train_split: float = 0.95,
     num_workers: int = 2
 ):
     
-    print(f"\nLoading Sangraha dataset...")
-    print(f"Dataset: {dataset_name}")
-    print(f"Subset: {subset_name}")
-    print(f"Using: {data_percent}% of data")
+    print(f"\nLoading data from parquet...")
+    print(f"Data path: {data_path}")
     
-    # Calculate splits
-    train_split = f"hin[:{data_percent}%]"
-    eval_split = f"hin[{data_percent}%:{data_percent + 0.2}%]"
+    # Load parquet file
+    df = pd.read_parquet(data_path)
+    print(f"✓ Loaded {len(df):,} examples")
+    print(f"Columns: {df.columns.tolist()}")
     
-    print(f"Train split: {train_split}")
-    print(f"Eval split: {eval_split}")
+    # Convert to HuggingFace Dataset
+    dataset = Dataset.from_pandas(df)
     
-    # Load datasets
-    # 'name' parameter selects the configuration/subset
-    train_data = load_dataset(
-        path=dataset_name,       
-        name=subset_name,        
-        split=train_split,        
-        trust_remote_code=True
+    # Split into train/eval
+    split_dataset = dataset.train_test_split(
+        train_size=train_split,
+        seed=42
     )
+    train_data = split_dataset['train']
+    eval_data = split_dataset['test']
     
-    eval_data = load_dataset(
-        path=dataset_name,
-        name=subset_name,
-        split=eval_split,
-        trust_remote_code=True
-    )
-    
-    print(f"✓ Train: {len(train_data):,} examples")
-    print(f"✓ Eval: {len(eval_data):,} examples")
-    print(f"Columns: {train_data.column_names}")
+    print(f"✓ Train: {len(train_data):,} examples ({train_split*100:.1f}%)")
+    print(f"✓ Eval: {len(eval_data):,} examples ({(1-train_split)*100:.1f}%)")
     
     # Tokenization function
     def tokenize(examples):
@@ -57,14 +47,14 @@ def prepare_datasets(
             return_special_tokens_mask=True,
         )
     
-    # Tokenize datasets
+    # Tokenize datasets -> need a way to cache this if you want to experiment more. 
     print("Tokenizing...")
     train_data = train_data.map(
         tokenize,
         batched=True,
+        batch_size=1024,
         remove_columns=train_data.column_names,
         desc="Tokenizing train",
-        num_proc=4
     )
     
     eval_data = eval_data.map(
@@ -72,7 +62,6 @@ def prepare_datasets(
         batched=True,
         remove_columns=eval_data.column_names,
         desc="Tokenizing eval",
-        num_proc=4
     )
     
     # Data collator for MLM
@@ -89,7 +78,7 @@ def prepare_datasets(
         shuffle=True,
         collate_fn=collator,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
     )
     
     eval_loader = DataLoader(

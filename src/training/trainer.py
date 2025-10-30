@@ -31,7 +31,7 @@ class DistillationTrainer:
         self.global_step = 0
         self.best_loss = float('inf')
         
-        os.makedirs(cfg.output_dir, exist_ok=True)
+        os.makedirs(cfg.paths.output_dir, exist_ok=True)
     
     def train_epoch(
         self, 
@@ -52,12 +52,12 @@ class DistillationTrainer:
         try:
             for step, batch in enumerate(pbar):
                 # Move to device
-                input_ids = batch["input_ids"].to(self.cfg.device)
-                attention_mask = batch["attention_mask"].to(self.cfg.device)
-                labels = batch["labels"].to(self.cfg.device)
+                input_ids = batch["input_ids"].to(self.cfg.hardware.device)
+                attention_mask = batch["attention_mask"].to(self.cfg.hardware.device)
+                labels = batch["labels"].to(self.cfg.hardware.device)
                 
                 # Forward pass with mixed precision
-                with torch.cuda.amp.autocast(enabled=self.cfg.mixed_precision):
+                with torch.cuda.amp.autocast(enabled=self.cfg.hardware.mixed_precision):
                     # Teacher forward (no gradients)
                     with torch.no_grad():
                         teacher_logits = self.teacher(input_ids, attention_mask).logits
@@ -68,28 +68,28 @@ class DistillationTrainer:
                     # Compute loss
                     loss, loss_kd, loss_ce = distillation_loss_fn(
                         student_logits, teacher_logits, labels,
-                        self.cfg.temperature, self.cfg.alpha
+                        self.cfg.training.temperature, self.cfg.training.alpha
                     )
                     
                     # Scale for gradient accumulation
-                    loss = loss / self.cfg.grad_accum
+                    loss = loss / self.cfg.training.grad_accum
                 
                 # Backward pass
-                if self.cfg.mixed_precision:
+                if self.cfg.hardware.mixed_precision:
                     self.scaler.scale(loss).backward()
                 else:
                     loss.backward()
                 
                 # Optimizer step (every grad_accum steps)
-                if (step + 1) % self.cfg.grad_accum == 0:
-                    if self.cfg.mixed_precision:
+                if (step + 1) % self.cfg.training.grad_accum == 0:
+                    if self.cfg.hardware.mixed_precision:
                         self.scaler.unscale_(self.optimizer)
                     
                     # Gradient clipping
                     torch.nn.utils.clip_grad_norm_(self.student.parameters(), 1.0)
                     
                     # Update weights
-                    if self.cfg.mixed_precision:
+                    if self.cfg.hardware.mixed_precision:
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                     else:
@@ -100,7 +100,7 @@ class DistillationTrainer:
                     self.global_step += 1
                 
                 # Track metrics
-                loss_value = loss.item() * self.cfg.grad_accum
+                loss_value = loss.item() * self.cfg.training.grad_accum
                 epoch_loss += loss_value
                 epoch_loss_kd += loss_kd
                 epoch_loss_ce += loss_ce
@@ -114,14 +114,14 @@ class DistillationTrainer:
                 })
                 
                 # Save checkpoint periodically
-                if self.global_step % self.cfg.save_every == 0 and \
-                   (step + 1) % self.cfg.grad_accum == 0:
+                if self.global_step % self.cfg.paths.save_every == 0 and \
+                   (step + 1) % self.cfg.training.grad_accum == 0:
                     self.save_checkpoint(f"step_{self.global_step}")
                     
         except RuntimeError as e:
             if "out of memory" in str(e):
                 print(f"\n❌ OOM Error at step {step}")
-                print(f"Try: batch_size={self.cfg.batch_size//2} or grad_accum={self.cfg.grad_accum*2}")
+                print(f"Try: batch_size={self.cfg.training.batch_size//2} or grad_accum={self.cfg.training.grad_accum*2}")
                 torch.cuda.empty_cache()
             raise
         
@@ -150,17 +150,17 @@ class DistillationTrainer:
         
         with torch.no_grad():
             for batch in tqdm(eval_loader, desc="Evaluating"):
-                input_ids = batch["input_ids"].to(self.cfg.device)
-                attention_mask = batch["attention_mask"].to(self.cfg.device)
-                labels = batch["labels"].to(self.cfg.device)
+                input_ids = batch["input_ids"].to(self.cfg.hardware.device)
+                attention_mask = batch["attention_mask"].to(self.cfg.hardware.device)
+                labels = batch["labels"].to(self.cfg.hardware.device)
                 
-                with torch.cuda.amp.autocast(enabled=self.cfg.mixed_precision):
+                with torch.cuda.amp.autocast(enabled=self.cfg.hardware.mixed_precision):
                     teacher_logits = self.teacher(input_ids, attention_mask).logits
                     student_logits = self.student(input_ids, attention_mask).logits
                     
                     loss, _, _ = distillation_loss_fn(
                         student_logits, teacher_logits, labels,
-                        self.cfg.temperature, self.cfg.alpha
+                        self.cfg.training.temperature, self.cfg.training.alpha
                     )
                     
                     total_loss += loss.item()
@@ -169,7 +169,7 @@ class DistillationTrainer:
     
     def save_checkpoint(self, name: str):
         """Save model checkpoint"""
-        checkpoint_path = os.path.join(self.cfg.output_dir, name)
+        checkpoint_path = os.path.join(self.cfg.paths.output_dir, name)
         self.student.save_pretrained(checkpoint_path)
         print(f"\n✓ Checkpoint saved: {checkpoint_path}")
         
@@ -179,8 +179,8 @@ class DistillationTrainer:
     def cleanup_old_checkpoints(self, keep_last: int = 5):
         """Keep only last N checkpoints"""
         checkpoints = [
-            d for d in os.listdir(self.cfg.output_dir)
-            if d.startswith("step_") and os.path.isdir(os.path.join(self.cfg.output_dir, d))
+            d for d in os.listdir(self.cfg.paths.output_dir)
+            if d.startswith("step_") and os.path.isdir(os.path.join(self.cfg.paths.output_dir, d))
         ]
         
         if len(checkpoints) > keep_last:
@@ -189,7 +189,7 @@ class DistillationTrainer:
             
             # Remove old checkpoints
             for old_checkpoint in checkpoints[:-keep_last]:
-                old_path = os.path.join(self.cfg.output_dir, old_checkpoint)
+                old_path = os.path.join(self.cfg.paths.output_dir, old_checkpoint)
                 shutil.rmtree(old_path)
                 print(f"Removed old checkpoint: {old_checkpoint}")
     
@@ -197,7 +197,7 @@ class DistillationTrainer:
         """Save best model if loss improved"""
         if loss < self.best_loss:
             self.best_loss = loss
-            best_path = os.path.join(self.cfg.output_dir, "best_model")
+            best_path = os.path.join(self.cfg.paths.output_dir, "best_model")
             self.student.save_pretrained(best_path)
             tokenizer.save_pretrained(best_path)
             print(f"✓ Best model saved (loss: {loss:.4f})")
@@ -206,7 +206,7 @@ class DistillationTrainer:
     
     def save_final(self, tokenizer):
         """Save final model"""
-        final_path = os.path.join(self.cfg.output_dir, "final_model")
+        final_path = os.path.join(self.cfg.paths.output_dir, "final_model")
         self.student.save_pretrained(final_path)
         tokenizer.save_pretrained(final_path)
         print(f"✓ Final model saved: {final_path}")

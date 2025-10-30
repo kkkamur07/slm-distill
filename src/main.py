@@ -8,11 +8,11 @@ from omegaconf import DictConfig, OmegaConf
 import hydra
 import os
 
-from src.models import load_teacher_model, create_student_model
-from src.data import prepare_datasets
+from src.models.student_model import load_teacher_model, create_student_model
+from src.data.data import prepare_datasets
 from src.training.loss import distillation_loss
 from src.training.trainer import DistillationTrainer
-from src.evaluate import evaluate_model, test_predictions
+from src.evals.evals import evaluate_model, test_predictions
 
 
 def setup_training(cfg: DictConfig, student, num_batches: int):
@@ -31,7 +31,7 @@ def setup_training(cfg: DictConfig, student, num_batches: int):
     scaler = torch.cuda.amp.GradScaler() if cfg.hardware.mixed_precision else None
     
     # Calculate total steps
-    total_steps = num_batches * cfg.training.num_epochs // cfg.training.gradient_accumulation_steps
+    total_steps = num_batches * cfg.training.num_epochs // cfg.training.grad_accum
     warmup_steps = int(total_steps * cfg.training.warmup_ratio)
     
     # Learning rate scheduler
@@ -47,7 +47,7 @@ def setup_training(cfg: DictConfig, student, num_batches: int):
     print(f"✓ Learning rate: {cfg.training.learning_rate}")
     print(f"✓ Total steps: {total_steps:,}")
     print(f"✓ Warmup steps: {warmup_steps:,}")
-    print(f"✓ Effective batch size: {cfg.training.batch_size * cfg.training.gradient_accumulation_steps}")
+    print(f"✓ Effective batch size: {cfg.training.batch_size * cfg.training.grad_accum}")
     
     return optimizer, scheduler, scaler
 
@@ -57,12 +57,47 @@ def print_config_summary(cfg: DictConfig):
     print("\n" + "="*60)
     print("CONFIGURATION SUMMARY")
     print("="*60)
-    print(f"Teacher: {cfg.teacher.name}")
-    print(f"Student: {cfg.model_name} ({cfg.student.num_hidden_layers}L, {cfg.student.hidden_size}H)")
-    print(f"Data: {cfg.data.dataset_name} - {cfg.data_name}")
-    print(f"Training: {cfg.training_name}")
-    print(f"Device: {cfg.hardware.device}")
-    print(f"Mixed precision: {cfg.hardware.mixed_precision}")
+    
+    # Models
+    print("\n[Models]")
+    print(f"  Teacher: {cfg.teacher.name}")
+    print(f"  Student: {cfg.names.model_name}")
+    print(f"    - Layers: {cfg.student.layers}")
+    print(f"    - Hidden size: {cfg.student.hidden_size}")
+    print(f"    - Embedding size: {cfg.student.embedding_size}")
+    print(f"    - Attention heads: {cfg.student.heads}")
+    print(f"    - Intermediate size: {cfg.student.intermediate}")
+    
+    # Data
+    print("\n[Data]")
+    print(f"  Path: {cfg.data.data_path}")
+    print(f"  Train split: {cfg.data.train_split*100:.0f}%")
+    print(f"  Max length: {cfg.data.max_length}")
+    
+    # Training
+    print("\n[Training]")
+    print(f"  Name: {cfg.names.training_name}")
+    print(f"  Learning rate: {cfg.training.learning_rate}")
+    print(f"  Batch size: {cfg.training.batch_size}")
+    print(f"  Gradient accumulation: {cfg.training.grad_accum}")
+    print(f"  Effective batch size: {cfg.training.batch_size * cfg.training.grad_accum}")
+    print(f"  Epochs: {cfg.training.num_epochs}")
+    print(f"  Weight decay: {cfg.training.weight_decay}")
+    print(f"  Warmup ratio: {cfg.training.warmup_ratio}")
+    print(f"  Temperature: {cfg.training.temperature}")
+    print(f"  Alpha (KD weight): {cfg.training.alpha}")
+    
+    # Hardware
+    print("\n[Hardware]")
+    print(f"  Device: {cfg.hardware.device}")
+    print(f"  Mixed precision: {cfg.hardware.mixed_precision}")
+    print(f"  Num workers: {cfg.hardware.num_workers}")
+    
+    # Paths
+    print("\n[Paths]")
+    print(f"  Output dir: {cfg.paths.output_dir}")
+    print(f"  Save every: {cfg.paths.save_every} steps")
+    
     print("="*60)
 
 
@@ -74,13 +109,13 @@ def print_training_info(cfg: DictConfig, compression: float, train_loader, eval_
     print(f"Compression ratio: {compression:.1f}x")
     print(f"Train batches: {len(train_loader):,}")
     print(f"Eval batches: {len(eval_loader):,}")
-    print(f"Temperature: {cfg.distillation.temperature}")
-    print(f"Alpha (KD weight): {cfg.distillation.alpha}")
+    print(f"Temperature: {cfg.training.temperature}")
+    print(f"Alpha (KD weight): {cfg.training.alpha}")
     print(f"Epochs: {cfg.training.num_epochs}")
     print("="*60)
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     """Main training function"""
     
@@ -100,13 +135,15 @@ def main(cfg: DictConfig):
     teacher, tokenizer = load_teacher_model(cfg.teacher.name, cfg.hardware.device)
     
     student = create_student_model(
-        tokenizer=tokenizer,
-        layers=cfg.student.num_hidden_layers,
+        vocab_size=tokenizer.vocab_size,
+        embedding_size=cfg.student.embedding_size,
+        layers=cfg.student.layers,
         hidden_size=cfg.student.hidden_size,
-        heads=cfg.student.num_attention_heads,
-        intermediate=cfg.student.intermediate_size,
+        heads=cfg.student.heads,
+        intermediate=cfg.student.intermediate,
         device=cfg.hardware.device
-    )
+        )
+    student = torch.compile(student)
     
     teacher_params = sum(p.numel() for p in teacher.parameters()) / 1e6
     student_params = sum(p.numel() for p in student.parameters()) / 1e6
@@ -123,12 +160,11 @@ def main(cfg: DictConfig):
     print("-" * 60)
     
     train_loader, eval_loader = prepare_datasets(
-        dataset_name=cfg.data.dataset_name,
-        subset_name=cfg.data.subset_name,
-        data_percent=cfg.data.data_percent,
+        data_path=cfg.data.data_path, 
         tokenizer=tokenizer,
-        max_length=cfg.data.max_seq_length,
+        max_length=cfg.data.max_length,
         batch_size=cfg.training.batch_size,
+        train_split=cfg.data.train_split,  # Add this config option
         num_workers=cfg.hardware.num_workers
     )
     

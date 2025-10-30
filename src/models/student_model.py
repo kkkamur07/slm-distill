@@ -1,4 +1,4 @@
-from transformers import BertForMaskedLM, PreTrainedTokenizerBase
+from transformers import AlbertConfig, AlbertForMaskedLM, BertConfig, BertForMaskedLM, PreTrainedTokenizerBase, AutoTokenizer
 from typing import Tuple
 import torch
 
@@ -20,7 +20,7 @@ def load_teacher_model(teacher_name: str, device: str) -> Tuple[BertForMaskedLM,
         tokenizer = AutoTokenizer.from_pretrained(teacher_name)
         
         # Load model
-        teacher = BertForMaskedLM.from_pretrained(teacher_name)
+        teacher = AlbertForMaskedLM.from_pretrained(teacher_name)
         
         # Freeze parameters BEFORE moving to device (more efficient)
         teacher.eval()
@@ -45,6 +45,7 @@ def create_student_model(
     vocab_size: int,
     layers: int,
     hidden_size: int,
+    embedding_size: int,
     heads: int,
     intermediate: int,
     device: str
@@ -55,8 +56,9 @@ def create_student_model(
     assert hidden_size % heads == 0, f"hidden_size must be divisible by heads"
     
     # Config
-    config = BertConfig(
-        vocab_size=vocab_size,              # SAME as teacher
+    config = AlbertConfig(
+        vocab_size=vocab_size,
+        embedding_size=embedding_size,
         num_hidden_layers=layers,
         hidden_size=hidden_size,
         num_attention_heads=heads,
@@ -68,11 +70,8 @@ def create_student_model(
     )
     
     # Create and move
-    student = BertForMaskedLM(config)
+    student = AlbertForMaskedLM(config)
     student.to(device)
+
     
-    # Count params
-    num_params = sum(p.numel() for p in student.parameters()) / 1e6
-    print(f"✓ Student: {num_params:.1f}M params ({layers}L, {hidden_size}H, {heads}A)")
-    
-    return student, num_params
+    return student

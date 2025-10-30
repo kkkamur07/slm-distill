@@ -1,34 +1,45 @@
 # Simple Configuration
 
+names:
+  model_name : "indic-bert-distillation"
+  data_name : "hin-cleaned"
+  training_name : "distillation-v1"
+
 # Models
-teacher_name: "ai4bharat/indic-bert"
+teacher:
+  name: "ai4bharat/indic-bert"
 
 student:
-  layers: 4
-  hidden_size: 256
-  heads: 4
-  intermediate: 1024
+  layers: 2
+  hidden_size: 128
+  embedding_size: 32
+  heads: 2
+  intermediate: 256
 
 # Data
-dataset: "ai4bharat/sangraha"
-subset: "verified"
-language: "hin"
-data_percent: 0.5
-max_length: 128
+data:
+  data_path: "data/hin/cleaned_data.parquet"
+  train_split: 0.95  # 95% train, 5% eval
+  max_length: 128
 
 # Training
-temperature: 2.0
-alpha: 0.5
-learning_rate: 5e-4
-batch_size: 16
-grad_accum: 4
-num_epochs: 3
+training:
+  temperature: 2.0
+  alpha: 0.4
+  learning_rate: 3e-4
+  batch_size: 32
+  grad_accum: 2 # Effective batch size 64
+  num_epochs: 4
+  weight_decay: 0.01
+  warmup_ratio: 0.06
 
 # Hardware
-device: "cuda"
-mixed_precision: true
-num_workers: 2
+hardware:
+  device: "cuda"
+  mixed_precision: true
+  num_workers: 4
 
 # Paths
-output_dir: "./outputs"
-save_every: 1000
+paths:
+  output_dir: "./outputs"
+  save_every: 1000
