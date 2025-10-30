@@ -1,0 +1,34 @@
+# Simple Configuration
+
+# Models
+teacher_name: "ai4bharat/indic-bert"
+
+student:
+  layers: 4
+  hidden_size: 256
+  heads: 4
+  intermediate: 1024
+
+# Data
+dataset: "ai4bharat/sangraha"
+subset: "verified"
+language: "hin"
+data_percent: 0.5
+max_length: 128
+
+# Training
+temperature: 2.0
+alpha: 0.5
+learning_rate: 5e-4
+batch_size: 16
+grad_accum: 4
+num_epochs: 3
+
+# Hardware
+device: "cuda"
+mixed_precision: true
+num_workers: 2
+
+# Paths
+output_dir: "./outputs"
+save_every: 1000
