@@ -60,3 +60,4 @@ We believe in:
 
 ---
 
+In addition to this Read_me summary, we have also created a short motivation, summary and outline for the project [in this google document](https://docs.google.com/document/d/1GsuYQtNDsrcAVk2r7jYUC8pDGk-cSKnhXMTzKyyU_NM/edit?tab=t.0).
