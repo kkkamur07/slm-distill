@@ -13,3 +13,4 @@ data/
 outputs/
 *.log
 train.log
+logs/
