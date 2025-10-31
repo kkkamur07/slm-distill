@@ -1,13 +1,13 @@
 ### Pretrain Distilling Mono-lingual models
 
+<img src="assets/genImage.png" alt="SLM Distill Banner" width="80%"/>
+
 <div align="center">
   <img src="https://img.shields.io/badge/Model-33M_params-blue" alt="Model Size"/>
   <img src="https://img.shields.io/badge/Compression-8x-green" alt="Compression"/>
   <img src="https://img.shields.io/badge/Language-Hindi-orange" alt="Language"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License"/>
 </div>
-
-![Image](assets/genImage.png)
 
 We are currently trying to do distillation of multilingual models to mono lingual ones starting with hindi langauge. This distillation happens during pre-training so the teacher now sort of acts as a guide during pre-training and thus we can have higher compression ratios as well. 
 
