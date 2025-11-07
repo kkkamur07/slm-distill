@@ -16,5 +16,4 @@ train.log
 logs/
 *cache/
 .pytest_cache/
-notebooks/
-notebook/
+
