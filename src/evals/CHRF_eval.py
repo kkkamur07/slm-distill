@@ -1,68 +1,86 @@
 import torch
 from tqdm import tqdm
-from transformers import pipeline
 from sacrebleu.metrics import CHRF
-from torch.utils.data import DataLoader, Subset
-
 
 @torch.no_grad()
-def _generate_mlm(model, tokenizer, loader, device, max_new_tokens=128):
-    """Generate text using masked language model"""
+def _mlm_fill_strings(model, tokenizer, loader, device):
+    """
+    Returns two aligned lists: (hyps, refs)
+    hyps: inputs with masked positions filled by model predictions
+    refs: inputs with masked positions filled by ground-truth labels
+    """
     model.eval()
-    outputs = []
-    
-    for batch in tqdm(loader, desc="Generating (MLM)"):
+    hyps, refs = [], []
+
+    for batch in tqdm(loader, desc="Filling masks"):
         input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        
-        # Get predictions
-        output = model(input_ids=input_ids, attention_mask=attention_mask)
-        predictions = torch.argmax(torch.softmax(output.logits, dim=-1), dim=-1)
-        
-        # Decode predictions
-        decoded = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-        outputs.extend([text.strip() for text in decoded])
-    
-    return outputs
+        labels = batch["labels"].to(device)  # ground-truth tokens at masked pos; -100 elsewhere
 
-def _decode_labels(labels_tensor, tokenizer):
-    """Decode label IDs to text"""
-    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
-    lbls = labels_tensor.clone()
-    lbls[lbls == -100] = pad_id
-    return [t.strip() for t in tokenizer.batch_decode(lbls, skip_special_tokens=True)]
+        attn = batch.get("attention_mask")
+        if attn is None:
+            pad = tokenizer.pad_token_id
+            attn = (input_ids != pad).long() if pad is not None else torch.ones_like(input_ids)
+        attn = attn.to(device)
 
-def compute_chrf_ground_truth(model, tokenizer, eval_loader, device, max_new_tokens=128):
-    """Evaluate model output vs ground-truth labels using chrF"""
-    model.eval()
-    
-    # Generate outputs
-    hyps = _generate_mlm(model, tokenizer, eval_loader, device, max_new_tokens)
-    
-    # Get references
-    refs = []
-    with torch.no_grad():
-        for batch in tqdm(eval_loader, desc="Preparing references"):
-            labels = batch["labels"].to(device)
-            refs.extend(_decode_labels(labels, tokenizer))
-    
-    # Calculate chrF score
-    chrf = CHRF(word_order=2)  # Using word_order=2 for chrF++
+        logits = model(input_ids=input_ids, attention_mask=attn).logits
+        preds = torch.argmax(logits, dim=-1)
+
+        mask_pos = (labels != -100)
+
+        hyp_ids = input_ids.clone()
+        hyp_ids[mask_pos] = preds[mask_pos]
+
+        ref_ids = input_ids.clone()
+        ref_ids[mask_pos] = labels[mask_pos]
+
+        hyps.extend([s.strip() for s in tokenizer.batch_decode(hyp_ids, skip_special_tokens=True)])
+        refs.extend([s.strip() for s in tokenizer.batch_decode(ref_ids, skip_special_tokens=True)])
+
+    return hyps, refs
+
+def compute_chrf_ground_truth(model, tokenizer, eval_loader, device, word_order=2):
+    """
+    chrF/chrF++ between model-filled and ground-truth-filled sentences.
+    Returns float in [0,1].
+    """
+    hyps, refs = _mlm_fill_strings(model, tokenizer, eval_loader, device)
+    chrf = CHRF(word_order=word_order)  # word_order=2 => chrF++
     score = chrf.corpus_score(hyps, [refs]).score
-    
-    return score / 100.0  # Normalize to 0-1 range
+    return score / 100.0
 
-def compute_chrf_student_teacher(student, teacher, tokenizer, eval_loader, device, max_new_tokens=128):
-    """Compare student output vs teacher output using chrF"""
-    # Generate from both models
-    teacher_refs = _generate_mlm(teacher, tokenizer, eval_loader, device, max_new_tokens)
-    student_hyps = _generate_mlm(student, tokenizer, eval_loader, device, max_new_tokens)
-    
-    # Calculate chrF score
-    chrf = CHRF(word_order=2)  # Using word_order=2 for chrF++
-    score = chrf.corpus_score(student_hyps, [teacher_refs]).score
-    
-    return score / 100.0  # Normalize to 0-1 range
+@torch.no_grad()
+def compute_chrf_student_teacher(student, teacher, tokenizer, eval_loader, device, word_order=2):
+    """
+    chrF/chrF++ between student-filled and teacher-filled sentences.
+    Runs both in one pass for alignment. Returns float in [0,1].
+    """
+    student.eval(); teacher.eval()
 
+    hyps, refs = [], []
+    for batch in tqdm(eval_loader, desc="Student–Teacher chrF"):
+        input_ids = batch["input_ids"].to(device)
+        labels = batch["labels"].to(device)
 
+        attn = batch.get("attention_mask")
+        if attn is None:
+            pad = tokenizer.pad_token_id
+            attn = (input_ids != pad).long() if pad is not None else torch.ones_like(input_ids)
+        attn = attn.to(device)
+
+        mask_pos = (labels != -100)
+
+        s_logits = student(input_ids=input_ids, attention_mask=attn).logits
+        t_logits = teacher(input_ids=input_ids, attention_mask=attn).logits
+        s_pred = torch.argmax(s_logits, dim=-1)
+        t_pred = torch.argmax(t_logits, dim=-1)
+
+        s_ids = input_ids.clone(); s_ids[mask_pos] = s_pred[mask_pos]
+        t_ids = input_ids.clone(); t_ids[mask_pos] = t_pred[mask_pos]
+
+        hyps.extend([t.strip() for t in tokenizer.batch_decode(s_ids, skip_special_tokens=True)])
+        refs.extend([t.strip() for t in tokenizer.batch_decode(t_ids, skip_special_tokens=True)])
+
+    chrf = CHRF(word_order=word_order)
+    score = chrf.corpus_score(hyps, [refs]).score
+    return score / 100.0
 

@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer, AutoConfig
-from src.evals.CHRF import compute_chrf_ground_truth, compute_chrf_student_teacher
+from src.evals.CHRF_eval import compute_chrf_ground_truth, compute_chrf_student_teacher
 from src.data.data import prepare_datasets
 
 def main():

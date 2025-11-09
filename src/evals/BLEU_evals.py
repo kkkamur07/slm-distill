@@ -5,64 +5,101 @@ from sacrebleu.metrics import BLEU
 from torch.utils.data import DataLoader, Subset
 
 
+import torch
+from tqdm import tqdm
+from sacrebleu.metrics import BLEU
+
 @torch.no_grad()
-def _generate_mlm(model, tokenizer, loader, device, max_new_tokens=128):
-    """Generate text using masked language model"""
+def _mlm_fill_strings(model, tokenizer, loader, device):
+    """
+    Returns two aligned lists: (hyps, refs_gt)
+    - hyps: input with masked positions filled by model predictions
+    - refs_gt: input with masked positions filled by ground-truth labels
+    """
     model.eval()
-    outputs = []
-    
-    for batch in tqdm(loader, desc="Generating (MLM)"):
+    hyps, refs = [], []
+
+    for batch in tqdm(loader, desc="Filling masks for BLEU"):
         input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        
-        # Get predictions
-        output = model(input_ids=input_ids, attention_mask=attention_mask)
-        predictions = torch.argmax(torch.softmax(output.logits, dim=-1), dim=-1) # softmax by itself throws an error, argmax works (alone or as a wrapper)
-        
-        # Decode predictions
-        decoded = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-        outputs.extend([text.strip() for text in decoded]) 
-    
-    return outputs
+        labels = batch["labels"].to(device)  # ground-truth ids at masked pos; -100 elsewhere
 
-def _decode_labels(labels_tensor, tokenizer):
-    """Decode label IDs to text"""
-    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
-    lbls = labels_tensor.clone()
-    lbls[lbls == -100] = pad_id
-    return [t.strip() for t in tokenizer.batch_decode(lbls, skip_special_tokens=True)]
+        attn = batch.get("attention_mask", None)
+        if attn is None:
+            if tokenizer.pad_token_id is not None:
+                attn = (input_ids != tokenizer.pad_token_id).long()
+            else:
+                attn = torch.ones_like(input_ids)
+        attn = attn.to(device)
 
-def compute_bleu_ground_truth(model, tokenizer, eval_loader, device, max_new_tokens=128):
-    """Evaluate model output vs ground-truth labels"""
-    model.eval()  # Ensure model is in eval mode
-    
-    # Generate outputs
-    hyps = _generate_mlm(model, tokenizer, eval_loader, device, max_new_tokens)
-    
-    # Get references
-    refs = []
-    with torch.no_grad():  # Add no_grad context
-        for batch in tqdm(eval_loader, desc="Preparing references"):
-            labels = batch["labels"].to(device)
-            refs.extend(_decode_labels(labels, tokenizer))
-    
-    # Calculate BLEU score
-    bleu = BLEU(lowercase=True)
+        logits = model(input_ids=input_ids, attention_mask=attn).logits
+        preds = torch.argmax(logits, dim=-1)
+
+        mask_pos = labels != -100
+
+        hyp_ids = input_ids.clone()
+        hyp_ids[mask_pos] = preds[mask_pos]
+
+        ref_ids = input_ids.clone()
+        ref_ids[mask_pos] = labels[mask_pos]
+
+        hyps.extend([s.strip() for s in tokenizer.batch_decode(hyp_ids, skip_special_tokens=True)])
+        refs.extend([s.strip() for s in tokenizer.batch_decode(ref_ids, skip_special_tokens=True)])
+
+    return hyps, refs
+
+def compute_bleu_ground_truth(model, tokenizer, eval_loader, device, lowercase=True):
+    """
+    BLEU between model-filled sentences and ground-truth-filled sentences.
+    Returns float in [0, 1].
+    """
+    hyps, refs = _mlm_fill_strings(model, tokenizer, eval_loader, device)
+    assert len(hyps) == len(refs) and len(hyps) > 0, "Empty or misaligned data."
+
+    bleu = BLEU(lowercase=lowercase)  # sacrebleu default tokenization=13a
     score = bleu.corpus_score(hyps, [refs]).score
-    
-    return score / 100.0  # Normalize to 0-1 range
+    return score / 100.0
 
-def compute_bleu_student_teacher(student, teacher, tokenizer, eval_loader, device, max_new_tokens=128):
-    """Compare student output vs teacher output using BLEU"""
-    # Generate from both models
-    teacher_refs = _generate_mlm(teacher, tokenizer, eval_loader, device, max_new_tokens)
-    student_hyps = _generate_mlm(student, tokenizer, eval_loader, device, max_new_tokens)
-    
-    # Calculate BLEU score : Here is the problem. 
-    bleu = BLEU(lowercase=True)
-    score = bleu.corpus_score(student_hyps, [teacher_refs]).score
-    
-    return score / 100.0  # Normalize to 0-1 range
+@torch.no_grad()
+def compute_bleu_student_teacher(student, teacher, tokenizer, eval_loader, device, lowercase=True):
+    """
+    BLEU between student-filled and teacher-filled sentences.
+    Runs both models in a single pass to keep exact alignment.
+    """
+    student.eval(); teacher.eval()
+    hyps, refs = [], []
+
+    for batch in tqdm(eval_loader, desc="Student–Teacher BLEU"):
+        input_ids = batch["input_ids"].to(device)
+        labels = batch["labels"].to(device)
+
+        attn = batch.get("attention_mask", None)
+        if attn is None:
+            if tokenizer.pad_token_id is not None:
+                attn = (input_ids != tokenizer.pad_token_id).long()
+            else:
+                attn = torch.ones_like(input_ids)
+        attn = attn.to(device)
+
+        mask_pos = labels != -100
+
+        s_logits = student(input_ids=input_ids, attention_mask=attn).logits
+        s_pred = torch.argmax(s_logits, dim=-1)
+        s_ids = input_ids.clone()
+        s_ids[mask_pos] = s_pred[mask_pos]
+
+        t_logits = teacher(input_ids=input_ids, attention_mask=attn).logits
+        t_pred = torch.argmax(t_logits, dim=-1)
+        t_ids = input_ids.clone()
+        t_ids[mask_pos] = t_pred[mask_pos]
+
+        hyps.extend([t.strip() for t in tokenizer.batch_decode(s_ids, skip_special_tokens=True)])
+        refs.extend([t.strip() for t in tokenizer.batch_decode(t_ids, skip_special_tokens=True)])
+
+    assert len(hyps) == len(refs) and len(hyps) > 0, "Empty or misaligned data."
+
+    bleu = BLEU(lowercase=lowercase)
+    score = bleu.corpus_score(hyps, [refs]).score
+    return score / 100.0
 
 
 # # Get BLEU scores this is simply for me to keep track on how to implement them, I'll delete all below soon

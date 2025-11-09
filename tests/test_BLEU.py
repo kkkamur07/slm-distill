@@ -1,134 +1,94 @@
+import os
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer, AutoConfig
+from torch.utils.data import Subset, DataLoader
+
 from src.evals.BLEU_evals import compute_bleu_ground_truth, compute_bleu_student_teacher
 from src.data.data import prepare_datasets
 
+
 def main():
-    print("="*60)
+    print("=" * 60)
     print("TESTING BLEU SCORE EVALUATIONS")
-    print("="*60)
-    
-    # Load models
+    print("=" * 60)
+
+    # Reproducibility
+    torch.manual_seed(0)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(0)
+
+    # 1) Load models
     device = "cuda" if torch.cuda.is_available() else "cpu"
     teacher_name = "FacebookAI/xlm-roberta-base"
     student_name = "kkkamur07/hindi-xlm-roberta-33M"
-    
+
+    print("\n[1] Loading models...")
     tokenizer = AutoTokenizer.from_pretrained(teacher_name, use_fast=True)
     teacher = AutoModelForMaskedLM.from_pretrained(teacher_name).to(device)
 
-    
+    # Load student model
     student_cfg = AutoConfig.from_pretrained(student_name, subfolder="model")
-
     student = AutoModelForMaskedLM.from_pretrained(
         student_name,
         subfolder="model",
         config=student_cfg,
-        token=True,  # if repo is gated/private
+        token=True,  # remove if not needed for your repository
     ).to(device)
 
-    # Just to be safe
+    # Ensure embedding size matches tokenizer
     student.resize_token_embeddings(len(tokenizer))
 
-
-    # print(f"\n[1] Loading models on {device}...")
-    # tokenizer = AutoTokenizer.from_pretrained(teacher_name, use_fast = True)
-    # teacher = AutoModelForMaskedLM.from_pretrained(teacher_name).to(device)
-    # cfg = AutoConfig.from_pretrained(teacher_name)
-    # student = AutoModelForMaskedLM.from_pretrained(
-    #     student_name,
-    #     config=cfg,
-    #     # token=True,
-    # ).to(device)
-
-    
-    # Load and prepare datasets - returns (train_loader, eval_loader)
+    # 2) Load dataset and dataloaders
     print("\n[2] Loading and preparing dataset...")
     train_loader, eval_loader = prepare_datasets(
-        data_path='data/hin/data-99.parquet',
+        data_path="data/hin/data-99.parquet",
         tokenizer=tokenizer,
         batch_size=12,
         max_length=256,
-        train_split=0.995
+        train_split=0.995,
     )
-    #eval_loader.dataset = eval_loader.dataset.select(range(100))
-    # Test BLEU calculations
-    print("\n[3] Testing BLEU calculations teacher...")
+
+    # Optional: restrict evaluation size for quick tests
+    # subset_size = 128
+    # eval_loader = DataLoader(
+    #     Subset(eval_loader.dataset, list(range(min(subset_size, len(eval_loader.dataset))))),
+    #     batch_size=12,
+    #     shuffle=False,
+    # )
+
+    # 3) BLEU evaluation for teacher vs ground truth
+    print("\n[3] Evaluating BLEU vs ground truth (teacher)...")
     try:
-        # Use eval_loader for BLEU calculation
-        ground_truth_bleu_teacher = compute_bleu_ground_truth(
-            teacher, tokenizer, eval_loader, device
-        )
-        print(f"Ground truth BLEU score: {ground_truth_bleu_teacher:.4f}")
-        print("BLEU evaluation test for teacher passed!")
-        
+        bleu_teacher = compute_bleu_ground_truth(teacher, tokenizer, eval_loader, device)
+        print(f"Ground-truth BLEU (teacher): {bleu_teacher:.4f}")
+        print("BLEU evaluation for teacher completed successfully.")
     except Exception as e:
-        print(f"Test failed with error: {str(e)}")
-        # Print full traceback for debugging
+        print("BLEU evaluation for teacher failed.")
         import traceback
         print(traceback.format_exc())
 
-    print("\n[4] Testing BLEU calculations student...")
+    # 4) BLEU evaluation for student vs ground truth
+    print("\n[4] Evaluating BLEU vs ground truth (student)...")
     try:
-        # Use eval_loader for BLEU calculation
-        ground_truth_bleu_student = compute_bleu_ground_truth(
-            student, tokenizer, eval_loader, device
-        )
-        print(f"Ground truth BLEU score: {ground_truth_bleu_student:.4f}")
-        print("BLEU evaluation test for student passed!")
-        
+        bleu_student = compute_bleu_ground_truth(student, tokenizer, eval_loader, device)
+        print(f"Ground-truth BLEU (student): {bleu_student:.4f}")
+        print("BLEU evaluation for student completed successfully.")
     except Exception as e:
-        print(f"Test failed with error: {str(e)}")
-        # Print full traceback for debugging
+        print("BLEU evaluation for student failed.")
         import traceback
         print(traceback.format_exc())
-    
-    print("\n[5] Testing BLEU calculations student to teacher...")
+
+    # 5) BLEU evaluation for student vs teacher outputs
+    print("\n[5] Evaluating BLEU similarity between student and teacher...")
     try:
-        # Use eval_loader for BLEU calculation
-        student_teacher_bleu = compute_bleu_student_teacher(
-            student, teacher, tokenizer, eval_loader, device
-        )
-        print(f"student-teacher similarity BLEU score: {student_teacher_bleu:.4f}")
-        print("BLEU evaluation test for student-teacher similarity passed!")
-        
+        bleu_student_teacher = compute_bleu_student_teacher(student, teacher, tokenizer, eval_loader, device)
+        print(f"Student–Teacher BLEU similarity: {bleu_student_teacher:.4f}")
+        print("BLEU evaluation for student–teacher similarity completed successfully.")
     except Exception as e:
-        print(f"Test failed with error: {str(e)}")
-        # Print full traceback for debugging
+        print("BLEU evaluation for student–teacher similarity failed.")
         import traceback
         print(traceback.format_exc())
 
 
 if __name__ == "__main__":
     main()
-
-
-
-    #student = AutoModelForMaskedLM.from_pretrained(student_name).to(device)
-    #eval_dataset = dataset["test"]  
-
-    # Tokenization function
-    # def tokenize_function(examples):
-    #     return tokenizer(
-    #         examples["text"],
-    #         truncation=True,
-    #         padding="max_length",
-    #         max_length=128
-    #     )
-
-    # # Tokenize the dataset
-    # print("\n[2] Tokenizing dataset...")
-    # tokenized_dataset = dataset.map(tokenize_function, batched=True)
-    # eval_loader = DataLoader(tokenized_dataset, batch_size=8)
-
-    # Test BLEU calculations
-    # print("\n[3] Testing BLEU calculations...")
-    # try:
-    #     ground_truth_bleu = compute_bleu_ground_truth(
-    #         teacher, tokenizer, dataset, device
-    #     )
-    #     print(f"Ground truth BLEU score: {ground_truth_bleu:.4f}")
-        
-        # teacher_bleu = compute_bleu_student_teacher(
-        #     student, teacher, tokenizer, eval_loader, device
-        # )
-        # print(f"Teacher-student BLEU score: {teacher_bleu:.4f}")

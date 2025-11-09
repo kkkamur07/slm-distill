@@ -2,90 +2,98 @@ import torch
 from tqdm import tqdm
 
 @torch.no_grad()
-def compute_next_token_accuracy(model, tokenizer, eval_loader, device):
+def _mlm_fill_strings(model, tokenizer, loader, device):
     """
-    Simple next-token (end-of-sequence) prediction accuracy for MLM models.
-    For each sequence we mask the final token and ask the model to predict it.
-    Returns accuracy in [0.0, 1.0].
+    Returns two aligned lists: (hyps, refs)
+    hyps: inputs with masked positions filled by model predictions
+    refs: inputs with masked positions filled by ground-truth labels
     """
     model.eval()
-    mask_id = tokenizer.mask_token_id
-    if mask_id is None:
-        raise RuntimeError("tokenizer has no mask_token_id")
+    hyps, refs = [], []
 
-    total = 0
-    correct = 0
-
-    for batch in tqdm(eval_loader, desc="NTP eval"):
+    for batch in tqdm(loader, desc="Filling masks"):
         input_ids = batch["input_ids"].to(device)
-        attention_mask = batch.get("attention_mask", torch.ones_like(input_ids)).to(device)
+        labels = batch["labels"].to(device)  # ground-truth tokens at masked pos; -100 elsewhere
 
-        # ground-truth is the last token in each sequence
-        labels = input_ids[:, -1].clone()
-        # mask last token
-        masked = input_ids.clone()
-        masked[:, -1] = mask_id
+        attn = batch.get("attention_mask")
+        if attn is None:
+            pad = tokenizer.pad_token_id
+            attn = (input_ids != pad).long() if pad is not None else torch.ones_like(input_ids)
+        attn = attn.to(device)
 
-        out = model(input_ids=masked, attention_mask=attention_mask)
-        logits = out.logits  # (B, seq_len, V)
-        preds = torch.argmax(logits[:, -1, :], dim=-1)  # predictions for final position
+        logits = model(input_ids=input_ids, attention_mask=attn).logits
+        preds = torch.argmax(logits, dim=-1)
 
-        valid = attention_mask[:, -1] == 1  # only consider sequences with last token present
-        if valid.any():
-            total += int(valid.sum().item())
-            correct += int((preds[valid] == labels[valid]).sum().item())
+        mask_pos = (labels != -100)
+
+        hyp_ids = input_ids.clone()
+        hyp_ids[mask_pos] = preds[mask_pos]
+
+        ref_ids = input_ids.clone()
+        ref_ids[mask_pos] = labels[mask_pos]
+
+        hyps.extend([s.strip() for s in tokenizer.batch_decode(hyp_ids, skip_special_tokens=True)])
+        refs.extend([s.strip() for s in tokenizer.batch_decode(ref_ids, skip_special_tokens=True)])
+
+    return hyps, refs
+
+@torch.no_grad()
+def compute_masked_token_accuracy(model, tokenizer, eval_loader, device):
+    """
+    Compute accuracy on masked positions only (labels != -100).
+    Returns float in [0,1].
+    """
+    model.eval()
+    correct, total = 0, 0
+
+    for batch in tqdm(eval_loader, desc="Masked-token accuracy"):
+        input_ids = batch["input_ids"].to(device)
+        labels = batch["labels"].to(device)
+        attention_mask = batch.get("attention_mask")
+        if attention_mask is None:
+            pad = tokenizer.pad_token_id
+            attention_mask = (input_ids != pad).long() if pad is not None else torch.ones_like(input_ids)
+        attention_mask = attention_mask.to(device)
+
+        logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
+        preds = torch.argmax(logits, dim=-1)
+
+        mask_pos = labels != -100
+        total += int(mask_pos.sum().item())
+        correct += int((preds[mask_pos] == labels[mask_pos]).sum().item())
 
     return (correct / total) if total > 0 else 0.0
 
 
 @torch.no_grad()
-def compare_student_teacher_next_token(student, teacher, tokenizer, eval_loader, device):
+def compare_student_teacher_masked_token_agreement(student, teacher, tokenizer, eval_loader, device):
     """
-    Computes:
-      - student_accuracy: student vs ground-truth (same scheme as compute_next_token_accuracy)
-      - teacher_accuracy: teacher vs ground-truth
-      - agreement: fraction where student prediction == teacher prediction
-    Returns dict of floats in [0.0, 1.0].
+    Agreement between student and teacher predictions on masked tokens.
+    Returns dict {'agreement': float in [0,1], 'total': int}.
     """
     student.eval()
     teacher.eval()
-    mask_id = tokenizer.mask_token_id
-    if mask_id is None:
-        raise RuntimeError("tokenizer has no mask_token_id")
+    total, agree = 0, 0
 
-    total = 0
-    student_correct = 0
-    teacher_correct = 0
-    agreement_count = 0
-
-    for batch in tqdm(eval_loader, desc="NTP student-teacher"):
+    for batch in tqdm(eval_loader, desc="Student–Teacher masked agreement"):
         input_ids = batch["input_ids"].to(device)
-        attention_mask = batch.get("attention_mask", torch.ones_like(input_ids)).to(device)
+        labels = batch["labels"].to(device)
+        attention_mask = batch.get("attention_mask")
+        if attention_mask is None:
+            pad = tokenizer.pad_token_id
+            attention_mask = (input_ids != pad).long() if pad is not None else torch.ones_like(input_ids)
+        attention_mask = attention_mask.to(device)
 
-        labels = input_ids[:, -1].clone()
-        masked = input_ids.clone()
-        masked[:, -1] = mask_id
+        s_logits = student(input_ids=input_ids, attention_mask=attention_mask).logits
+        t_logits = teacher(input_ids=input_ids, attention_mask=attention_mask).logits
+        s_pred = torch.argmax(s_logits, dim=-1)
+        t_pred = torch.argmax(t_logits, dim=-1)
 
-        out_s = student(input_ids=masked, attention_mask=attention_mask)
-        out_t = teacher(input_ids=masked, attention_mask=attention_mask)
-
-        preds_s = torch.argmax(out_s.logits[:, -1, :], dim=-1)
-        preds_t = torch.argmax(out_t.logits[:, -1, :], dim=-1)
-
-        valid = attention_mask[:, -1] == 1
-        if not valid.any():
+        mask_pos = labels != -100
+        n = int(mask_pos.sum().item())
+        if n == 0:
             continue
+        total += n
+        agree += int((s_pred[mask_pos] == t_pred[mask_pos]).sum().item())
 
-        total += int(valid.sum().item())
-        student_correct += int((preds_s[valid] == labels[valid]).sum().item())
-        teacher_correct += int((preds_t[valid] == labels[valid]).sum().item())
-        agreement_count += int((preds_s[valid] == preds_t[valid]).sum().item())
-
-    if total == 0:
-        return {"student_accuracy": 0.0, "teacher_accuracy": 0.0, "agreement": 0.0}
-
-    return {
-        "student_accuracy": student_correct / total,
-        "teacher_accuracy": teacher_correct / total,
-        "agreement": agreement_count / total,
-    }
+    return {"agreement": (agree / total) if total > 0 else 0.0, "total": total}
