@@ -19,6 +19,7 @@ dependencies = [
     "protobuf>=6.33.0",
     "pytest>=8.4.2",
     "sacrebleu>=2.4.0",
+    "scikit-learn>=1.7.2",
     "sentencepiece>=0.2.1",
     "setuptools>=80.9.0",
     "torch>=2.9.0",
