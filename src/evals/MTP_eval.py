@@ -40,7 +40,7 @@ def _mlm_fill_strings(model, tokenizer, loader, device):
 @torch.no_grad()
 def compute_masked_token_accuracy(model, tokenizer, eval_loader, device):
     """
-    Compute accuracy on masked positions only (labels != -100).
+    Compute accuracy on masked positions only.
     Returns float in [0,1].
     """
     model.eval()

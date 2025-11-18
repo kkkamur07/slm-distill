@@ -4,7 +4,6 @@ from tqdm import tqdm
 from transformers import AutoConfig, XLMRobertaForSequenceClassification
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
-
 @torch.no_grad()
 def _get_pair_embeddings(
     model,
@@ -16,8 +15,6 @@ def _get_pair_embeddings(
     max_length: int = 128,
 ):
     """
-    Return [CLS] token embeddings for a list of (premise, hypothesis) pairs.
-
     Args:
         model: A sequence classification (or encoder) model.
         tokenizer: Matching tokenizer.
@@ -50,7 +47,7 @@ def _get_pair_embeddings(
         enc = {k: v.to(device) for k, v in enc.items()}
 
         outputs = model(**enc, output_hidden_states=True)
-        # Last hidden state: (B, L, H); XLM-R uses first token <s> as sequence-pair representation
+        # Last hidden state: (B, L, H)
         last_hidden = outputs.hidden_states[-1]
         cls_emb = last_hidden[:, 0, :]  # (B, H)
 
@@ -75,8 +72,6 @@ def compute_nli_accuracy(
     max_length: int = 128,
 ):
     """
-    Compute NLI classification metrics on (premise, hypothesis, label) triples.
-
     Args:
         model: XLMRobertaForSequenceClassification (teacher or student).
         tokenizer: Matching tokenizer.
@@ -144,13 +139,7 @@ def compute_nli_embedding_similarity(
     max_length: int = 128,
 ):
     """
-    Compare student vs teacher CLS embeddings for NLI pairs via cosine similarity.
-
-    We:
-      * encode each (premise, hypothesis) with both models
-      * take [CLS] from the last hidden layer as sequence-pair embedding
-      * L2-normalize and compute cosine similarity per example
-      * return the mean similarity across all examples
+    Comparing teacher - student embeddings (L2 used)
     """
     teacher_embs = _get_pair_embeddings(
         teacher,
@@ -197,12 +186,6 @@ def create_nli_classifier(
     **model_kwargs,
 ):
     """
-    Create an XLM-R NLI classifier on top of a pretrained base.
-
-    Works both for:
-      - plain HF models like "FacebookAI/xlm-roberta-base"
-      - students stored in a subfolder (e.g. subfolder="model")
-
     Args:
         base_model_name: HF model id or local path.
         num_labels: number of NLI labels.

@@ -62,35 +62,6 @@ def _mlm_fill_strings(model, tokenizer, loader, device):
 
 
 @torch.no_grad()
-def compute_bert_score_mlm(model, tokenizer, eval_loader, device, lang=None, **kwargs):
-    """
-    Compute BERTScore between MLM-filled predictions and ground truth.
-
-    Uses _mlm_fill_strings to create:
-      - hyps: sentences with model predictions at masked positions
-      - refs: sentences with ground-truth tokens at masked positions
-    """
-    hyps, refs = _mlm_fill_strings(model, tokenizer, eval_loader, device)
-
-    if len(hyps) == 0:
-        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
-
-    P, R, F1 = bert_score_fn(
-        hyps,
-        refs,
-        lang=lang,
-        rescale_with_baseline=True,
-        **kwargs,
-    )
-
-    return {
-        "precision": P.mean().item(),
-        "recall": R.mean().item(),
-        "f1": F1.mean().item(),
-    }
-
-
-@torch.no_grad()
 def compute_cosine_similarity_ground_truth(model, tokenizer, eval_loader, device):
     """
     Cosine similarity between:

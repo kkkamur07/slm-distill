@@ -11,19 +11,7 @@ from src.evals.nli_eval import (
 
 def load_nli_data(path: str = "data/hin/xnli_hi_test.json"):
     """
-    Load NLI test data from JSON.
-
-    Expected format (like your example):
-
-    {
-      "test": [
-        {"premise": "...", "hypothesis": "...", "label": 2},
-        ...
-      ]
-    }
-
-    If the top-level JSON is a list, we just use that list directly.
-
+    Data is a JSON
     Returns:
         premises: list[str]
         hypotheses: list[str]
@@ -53,7 +41,7 @@ def load_nli_data(path: str = "data/hin/xnli_hi_test.json"):
         hypotheses.append(str(ex["hypothesis"]))
         raw_labels.append(int(ex["label"]))
 
-    # Map raw label ids to contiguous 0..K-1 ids (defensive, in case they aren't)
+    # Mapping raw label ids to contiguous 0..K-1 ids 
     unique_raw = sorted(set(raw_labels))
     raw_to_id = {raw: idx for idx, raw in enumerate(unique_raw)}
     labels = [raw_to_id[r] for r in raw_labels]
@@ -82,7 +70,7 @@ def main():
         )
         num_labels = len(raw_to_id)
         print(
-            f"✓ Loaded {len(premises)} examples with {num_labels} labels "
+            f"Loaded {len(premises)} examples with {num_labels} labels "
             f"(raw->id mapping: {raw_to_id})"
         )
     except Exception as e:
@@ -94,23 +82,21 @@ def main():
 
     print("\n[3] Creating NLI classifiers (teacher & student)...")
     try:
-        # Teacher: standard HF checkpoint
+       
         teacher = create_nli_classifier(
             teacher_name,
             num_labels=num_labels,
             dropout=0.1,
         ).to(device)
 
-        # Student: lives in 'model/' subfolder on HF (like in test_MTP)
         student = create_nli_classifier(
             student_name,
             num_labels=num_labels,
             dropout=0.1,
             subfolder="model",
-            # token=True,  # uncomment / adjust if you need to pass a HF token
         ).to(device)
 
-        print("✓ Models created successfully.")
+        print("Models created successfully.")
     except Exception as e:
         print(
             f"Failed to create NLI classifiers (teacher='{teacher_name}', "
@@ -131,7 +117,7 @@ def main():
             labels,
             device,
         )
-        print(f"✓ Teacher accuracy:   {teacher_metrics['accuracy']:.4f}")
+        print(f"  Teacher accuracy:   {teacher_metrics['accuracy']:.4f}")
         print(f"  macro-F1:           {teacher_metrics['macro_f1']:.4f}")
         print(f"  micro-F1:           {teacher_metrics['micro_f1']:.4f}")
         print(f"  precision (macro):  {teacher_metrics['precision']:.4f}")
@@ -173,7 +159,7 @@ def main():
             hypotheses,
             device,
         )
-        print(f"✓ Embedding similarity (CLS representations): {sim['similarity']:.4f}")
+        print(f"Embedding similarity (CLS representations): {sim['similarity']:.4f}")
     except Exception as e:
         print(f"Embedding similarity evaluation failed: {e}")
         import traceback

@@ -1,7 +1,6 @@
 import torch
 from transformers import AutoTokenizer
 import pandas as pd
-
 from src.evals.sentiment_eval import (
     compute_sentiment_accuracy,
     compute_sentiment_embedding_similarity,
@@ -10,12 +9,8 @@ from src.evals.sentiment_eval import (
 
 
 def load_sentiment_data(data_path: str = "data/hin/sentiment_metadata.tsv"):
-    """Load sentiment dataset from TSV.
-
-    Expected columns in the TSV:
-        - REVIEW: the review text
-        - LABEL: the sentiment label (e.g. "Positive", "Negative", ...)
-
+    """
+    Data is in a TSV file for now 
     Returns:
         texts: list of review strings
         labels: list of integer ids
@@ -24,12 +19,7 @@ def load_sentiment_data(data_path: str = "data/hin/sentiment_metadata.tsv"):
     """
     df = pd.read_csv(data_path, sep="\t")
 
-    if "REVIEW" not in df.columns or "LABEL" not in df.columns:
-        raise ValueError(
-            f"Expected columns 'REVIEW' and 'LABEL' in {data_path}, got: {list(df.columns)}"
-        )
-
-    # Drop rows with missing labels so we don't treat "nan" as a real class
+    # Drop rows with missing labels 
     df = df.dropna(subset=["LABEL"])
 
     texts = df["REVIEW"].astype(str).tolist()
@@ -75,7 +65,7 @@ def main():
 
     print("\n[3] Creating sentiment classifiers (teacher & student)...")
     try:
-        # Teacher: standard HF checkpoint
+        
         teacher = create_sentiment_classifier(
             teacher_name,
             num_labels=num_labels,
@@ -84,8 +74,7 @@ def main():
             dropout=0.1,
         ).to(device)
 
-        # Student: lives in 'model/' subfolder on HF (like in test_MTP)
-        # If you need an HF token for a private repo, you can pass token=...
+        
         student = create_sentiment_classifier(
             student_name,
             num_labels=num_labels,
@@ -93,7 +82,6 @@ def main():
             id2label=id2label,
             dropout=0.1,
             subfolder="model",
-            # token=True,  # uncomment / adjust if you really need to pass a token kwarg
         ).to(device)
 
         print("✓ Models created successfully.")

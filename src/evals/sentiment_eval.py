@@ -8,8 +8,6 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 @torch.no_grad()
 def _get_sentence_embeddings(model, tokenizer, texts, device, batch_size: int = 32, max_length: int = 128):
     """
-    Return [CLS] token embeddings for a list of texts.
-
     Args:
         model: A sequence classification (or encoder) model.
         tokenizer: Matching tokenizer.
@@ -39,7 +37,7 @@ def _get_sentence_embeddings(model, tokenizer, texts, device, batch_size: int = 
         enc = {k: v.to(device) for k, v in enc.items()}
 
         outputs = model(**enc, output_hidden_states=True)
-        # Last hidden state: (B, L, H); XLM-R uses first token <s> as sentence representation
+        # Last hidden state: (B, L, H)
         last_hidden = outputs.hidden_states[-1]
         cls_emb = last_hidden[:, 0, :]  # (B, H)
 
@@ -63,8 +61,6 @@ def compute_sentiment_accuracy(
     max_length: int = 128,
 ):
     """
-    Compute sentiment classification metrics on a list of (text, label).
-
     Args:
         model: XLMRobertaForSequenceClassification (teacher or student).
         tokenizer: Matching tokenizer.
@@ -128,13 +124,8 @@ def compute_sentiment_embedding_similarity(
     max_length: int = 128,
 ):
     """
-    Compare student vs teacher sentence embeddings via cosine similarity.
-
-    We:
-      * encode each review with both models
-      * take [CLS] from the last hidden layer as sentence embedding
-      * L2-normalize and compute cosine similarity per example
-      * return the mean similarity across all examples
+    Compare student vs teacher sentence embeddings via cosine similarity
+    Uses L2
     """
     teacher_embs = _get_sentence_embeddings(
         teacher, tokenizer, texts, device, batch_size=batch_size, max_length=max_length
@@ -171,12 +162,6 @@ def create_sentiment_classifier(
     **model_kwargs,
 ):
     """
-    Create an XLM-R sentiment classifier on top of a pretrained base.
-
-    Works both for:
-      - plain HF models like "FacebookAI/xlm-roberta-base"
-      - students stored in a subfolder (e.g. subfolder="model")
-
     Args:
         base_model_name: HF model id or local path.
         num_labels: number of sentiment classes.
@@ -189,7 +174,7 @@ def create_sentiment_classifier(
     Returns:
         XLMRobertaForSequenceClassification instance.
     """
-    # ---- Build kwargs for config / model without passing subfolder=None ----
+    # configs
     config_kwargs = dict(model_kwargs)
     if subfolder is not None:
         config_kwargs["subfolder"] = subfolder
