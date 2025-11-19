@@ -13,8 +13,6 @@ def distillation_loss(
     alpha: float
 ) -> Tuple[torch.Tensor, float, float]:
    
-    
-    # Flatten everything for easier processing
     batch_size, seq_len, vocab_size = student_logits.shape
     student_flat = student_logits.view(-1, vocab_size)  # (batch*seq, vocab)
     teacher_flat = teacher_logits.view(-1, vocab_size)  # (batch*seq, vocab)
