@@ -139,7 +139,7 @@ def compute_nli_embedding_similarity(
     max_length: int = 128,
 ):
     """
-    Comparing teacher - student embeddings (L2 used)
+    Comparing teacher - student embeddings (cosine used)
     """
     teacher_embs = _get_pair_embeddings(
         teacher,

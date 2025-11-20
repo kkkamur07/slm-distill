@@ -24,8 +24,7 @@ def main():
         token=True,
     ).to(device)
     
-    student.resize_token_embeddings(len(tokenizer))
-    
+    assert student.get_input_embeddings().num_embeddings == len(tokenizer)      
     # Load and prepare datasets
     print("\n[2] Loading and preparing dataset...")
     train_loader, eval_loader = prepare_datasets(

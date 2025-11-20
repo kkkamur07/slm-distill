@@ -1,41 +1,6 @@
 import torch
 from tqdm import tqdm
 
-@torch.no_grad()
-def _mlm_fill_strings(model, tokenizer, loader, device):
-    """
-    Returns two aligned lists: (hyps, refs)
-    hyps: inputs with masked positions filled by model predictions
-    refs: inputs with masked positions filled by ground-truth labels
-    """
-    model.eval()
-    hyps, refs = [], []
-
-    for batch in tqdm(loader, desc="Filling masks"):
-        input_ids = batch["input_ids"].to(device)
-        labels = batch["labels"].to(device)  # ground-truth tokens at masked pos; -100 elsewhere
-
-        attn = batch.get("attention_mask")
-        if attn is None:
-            pad = tokenizer.pad_token_id
-            attn = (input_ids != pad).long() if pad is not None else torch.ones_like(input_ids)
-        attn = attn.to(device)
-
-        logits = model(input_ids=input_ids, attention_mask=attn).logits
-        preds = torch.argmax(logits, dim=-1)
-
-        mask_pos = (labels != -100)
-
-        hyp_ids = input_ids.clone()
-        hyp_ids[mask_pos] = preds[mask_pos]
-
-        ref_ids = input_ids.clone()
-        ref_ids[mask_pos] = labels[mask_pos]
-
-        hyps.extend([s.strip() for s in tokenizer.batch_decode(hyp_ids, skip_special_tokens=True)])
-        refs.extend([s.strip() for s in tokenizer.batch_decode(ref_ids, skip_special_tokens=True)])
-
-    return hyps, refs
 
 @torch.no_grad()
 def compute_masked_token_accuracy(model, tokenizer, eval_loader, device):

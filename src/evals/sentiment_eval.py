@@ -21,7 +21,7 @@ def _get_sentence_embeddings(model, tokenizer, texts, device, batch_size: int = 
     """
     model.eval()
     all_embs = []
-
+    model.to(device)
     for i in tqdm(range(0, len(texts), batch_size), desc="Encoding sentences"):
         batch_texts = texts[i : i + batch_size]
         if not batch_texts:
@@ -125,7 +125,6 @@ def compute_sentiment_embedding_similarity(
 ):
     """
     Compare student vs teacher sentence embeddings via cosine similarity
-    Uses L2
     """
     teacher_embs = _get_sentence_embeddings(
         teacher, tokenizer, texts, device, batch_size=batch_size, max_length=max_length

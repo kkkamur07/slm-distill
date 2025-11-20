@@ -1,66 +1,74 @@
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
-from bert_score import score as bert_score_fn
-
 
 @torch.no_grad()
-def _mlm_fill_strings(model, tokenizer, loader, device):
+def compute_cosine_similarity_student_teacher(student, teacher, tokenizer, eval_loader, device):
     """
-    For each example, fill masked positions with model predictions and
-    reconstruct the ground-truth text by inserting labels.
+    Cosine similarity between student and teacher *hidden states* at masked positions.
+
+    Only masked tokens (where labels != -100) are used.
 
     Returns:
-        hyps: list[str]  - text with model predictions at masked positions
-        refs: list[str]  - text with ground-truth tokens at masked positions
+        float: mean cosine similarity over all masked tokens.
 
-    Assumptions:
-      - batch["input_ids"]: (B, L)
-      - batch["labels"]: (B, L), with -100 at non-masked positions,
-        and true token IDs at masked positions.
-      - optionally batch["attention_mask"].
+    This is a representation-level distillation metric: do the student
+    and teacher encoders produce similar contextual representations
+    where the model is actually asked to predict (the masked tokens)?
     """
-    model.eval()
-    hyps, refs = [], []
+    student.eval()
+    teacher.eval()
 
-    for batch in tqdm(loader, desc="Filling masks"):
+    total_sim = 0.0
+    count = 0
+
+    for batch in tqdm(eval_loader, desc="Cosine sim (student vs teacher)"):
         input_ids = batch["input_ids"].to(device)
         labels = batch["labels"].to(device)
         attention_mask = batch.get(
             "attention_mask",
-            torch.ones_like(input_ids, device=device),
+            torch.ones_like(input_ids),
         ).to(device)
 
-        # Model predictions
-        logits = model(
+        s_out = student(
             input_ids=input_ids,
             attention_mask=attention_mask,
-        ).logits  # (B, L, vocab)
-        preds = torch.argmax(logits, dim=-1)  # (B, L)
-
-        mask_pos = labels != -100  # True only at masked tokens
-
-        # Hypothesis: fill masked positions with predicted tokens
-        hyp_ids = input_ids.clone()
-        hyp_ids[mask_pos] = preds[mask_pos]
-
-        # Reference: fill masked positions with ground-truth labels
-        ref_ids = input_ids.clone()
-        ref_ids[mask_pos] = labels[mask_pos]
-
-        hyp_texts = tokenizer.batch_decode(
-            hyp_ids, skip_special_tokens=True
+            output_hidden_states=True,
         )
-        ref_texts = tokenizer.batch_decode(
-            ref_ids, skip_special_tokens=True
+        t_out = teacher(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
         )
 
-        hyps.extend(t.strip() for t in hyp_texts)
-        refs.extend(t.strip() for t in ref_texts)
+        s_hidden = s_out.hidden_states[-1]  # (B, L, H_s)
+        t_hidden = t_out.hidden_states[-1]  # (B, L, H_t)
 
-    return hyps, refs
+        # Masked positions only
+        mask_pos = labels != -100
+        if mask_pos.sum().item() == 0:
+            continue
+
+        s_masked = s_hidden[mask_pos]  # (N_masked, H_s)
+        t_masked = t_hidden[mask_pos]  # (N_masked, H_t)
+
+        # If student and teacher hidden sizes differ, align to min dim
+        if s_masked.shape[-1] != t_masked.shape[-1]:
+            min_dim = min(s_masked.shape[-1], t_masked.shape[-1])
+            s_masked = s_masked[:, :min_dim]
+            t_masked = t_masked[:, :min_dim]
+
+        sim = F.cosine_similarity(s_masked, t_masked, dim=-1)
+        total_sim += sim.sum().item()
+        count += sim.numel()
+
+    return (total_sim / count) if count > 0 else 0.0
 
 
+
+
+
+#### not a core metric, somewhat redundant with perplexity
 @torch.no_grad()
 def compute_cosine_similarity_ground_truth(model, tokenizer, eval_loader, device):
     """
@@ -82,7 +90,7 @@ def compute_cosine_similarity_ground_truth(model, tokenizer, eval_loader, device
         labels = batch["labels"].to(device)
         attention_mask = batch.get(
             "attention_mask",
-            torch.ones_like(input_ids, device=device),
+            torch.ones_like(input_ids),
         ).to(device)
 
         outputs = model(
@@ -131,65 +139,3 @@ def compute_cosine_similarity_ground_truth(model, tokenizer, eval_loader, device
 
     return (total_sim / count) if count > 0 else 0.0
 
-
-@torch.no_grad()
-def compute_cosine_similarity_student_teacher(student, teacher, tokenizer, eval_loader, device):
-    """
-    Cosine similarity between student and teacher *hidden states* at masked positions.
-
-    Only masked tokens (where labels != -100) are used.
-
-    Returns:
-        float: mean cosine similarity over all masked tokens.
-
-    This is a representation-level distillation metric: do the student
-    and teacher encoders produce similar contextual representations
-    where the model is actually asked to predict (the masked tokens)?
-    """
-    student.eval()
-    teacher.eval()
-
-    total_sim = 0.0
-    count = 0
-
-    for batch in tqdm(eval_loader, desc="Cosine sim (student vs teacher)"):
-        input_ids = batch["input_ids"].to(device)
-        labels = batch["labels"].to(device)
-        attention_mask = batch.get(
-            "attention_mask",
-            torch.ones_like(input_ids, device=device),
-        ).to(device)
-
-        s_out = student(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True,
-        )
-        t_out = teacher(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True,
-        )
-
-        s_hidden = s_out.hidden_states[-1]  # (B, L, H_s)
-        t_hidden = t_out.hidden_states[-1]  # (B, L, H_t)
-
-        # Masked positions only
-        mask_pos = labels != -100
-        if mask_pos.sum().item() == 0:
-            continue
-
-        s_masked = s_hidden[mask_pos]  # (N_masked, H_s)
-        t_masked = t_hidden[mask_pos]  # (N_masked, H_t)
-
-        # If student and teacher hidden sizes differ, align to min dim
-        if s_masked.shape[-1] != t_masked.shape[-1]:
-            min_dim = min(s_masked.shape[-1], t_masked.shape[-1])
-            s_masked = s_masked[:, :min_dim]
-            t_masked = t_masked[:, :min_dim]
-
-        sim = F.cosine_similarity(s_masked, t_masked, dim=-1)
-        total_sim += sim.sum().item()
-        count += sim.numel()
-
-    return (total_sim / count) if count > 0 else 0.0
