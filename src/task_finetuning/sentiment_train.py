@@ -5,6 +5,7 @@ from torch.optim import AdamW
 from tqdm import tqdm
 from src.evals.sentiment_eval import compute_sentiment_accuracy
 
+
 def train_sentiment_model(
     model: nn.Module,
     tokenizer,
@@ -17,46 +18,20 @@ def train_sentiment_model(
     batch_size: int = 16,
     learning_rate: float = 2e-5,
     max_length: int = 128,
-    eval_on_dev: bool = True,
 ) -> Dict[str, Any]:
-    """
-    Inputs:
-      - model: already loaded classifier (e.g. XLMRobertaForSequenceClassification)
-      - tokenizer: matching tokenizer
-      - train_texts / train_labels: training data
-      - dev_texts / dev_labels: dev data (can be None)
-      - device: 'cuda' or 'cpu'
-
-    Returns:
-      - dict with:
-          "model": the trained model,
-          "history": list of {"epoch": int, "train_loss": float, "dev_metrics": dict | None}
-    """
     model.to(device)
+    model.train()
+
     optimizer = AdamW(model.parameters(), lr=learning_rate)
-
-    n_train = len(train_texts)
-    history: List[Dict[str, Any]] = []
-
-    print(f"\nStarting SENTIMENT training on {n_train} examples...")
+    history = []
 
     for epoch in range(1, num_epochs + 1):
         model.train()
-        epoch_loss = 0.0
-        num_batches = 0
+        total_loss = 0.0
 
-        idxs = torch.randperm(n_train).tolist()
-
-        for start in tqdm(
-            range(0, n_train, batch_size),
-            desc=f"Epoch {epoch}/{num_epochs}",
-        ):
-            batch_indices = idxs[start : start + batch_size]
-            if not batch_indices:
-                continue
-
-            batch_texts = [train_texts[i] for i in batch_indices]
-            batch_y = [train_labels[i] for i in batch_indices]
+        for i in tqdm(range(0, len(train_texts), batch_size), desc=f"Epoch {epoch}"):
+            batch_texts = train_texts[i : i + batch_size]
+            batch_labels = train_labels[i : i + batch_size]
 
             enc = tokenizer(
                 batch_texts,
@@ -64,25 +39,22 @@ def train_sentiment_model(
                 truncation=True,
                 max_length=max_length,
                 return_tensors="pt",
-            )
-            enc = {k: v.to(device) for k, v in enc.items()}
-            labels = torch.tensor(batch_y, dtype=torch.long, device=device)
+            ).to(device)
 
-            outputs = model(**enc, labels=labels)
+            labels_tensor = torch.tensor(batch_labels, dtype=torch.long, device=device)
+
+            optimizer.zero_grad()
+            outputs = model(**enc, labels=labels_tensor)
             loss = outputs.loss
-
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
 
-            epoch_loss += loss.item()
-            num_batches += 1
+            total_loss += loss.item()
 
-        avg_loss = epoch_loss / max(num_batches, 1)
-        print(f"\nEpoch {epoch}: train loss = {avg_loss:.4f}")
-
+        avg_loss = total_loss / max(1, len(train_texts) // batch_size)
         dev_metrics = None
-        if eval_on_dev and dev_texts is not None and dev_labels is not None:
+
+        if dev_texts is not None and dev_labels is not None and len(dev_texts) > 0:
             dev_metrics = compute_sentiment_accuracy(
                 model,
                 tokenizer,
@@ -91,13 +63,6 @@ def train_sentiment_model(
                 device,
                 batch_size=batch_size,
                 max_length=max_length,
-            )
-            print(
-                f"Dev accuracy: {dev_metrics['accuracy']:.4f} | "
-                f"macro-F1: {dev_metrics['macro_f1']:.4f} | "
-                f"micro-F1: {dev_metrics['micro_f1']:.4f} | "
-                f"precision (macro): {dev_metrics['precision']:.4f} | "
-                f"recall (macro): {dev_metrics['recall']:.4f}"
             )
 
         history.append(

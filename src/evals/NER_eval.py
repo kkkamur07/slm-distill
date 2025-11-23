@@ -1,6 +1,5 @@
 from typing import List, Dict
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import AutoConfig, XLMRobertaForTokenClassification
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
@@ -14,6 +13,9 @@ def create_ner_tagger(
     dropout: float = 0.1,
     subfolder: str | None = None,
 ):
+    """
+    Create an XLM-RoBERTa-based NER tagger.
+    """
     cfg_kwargs = {}
     if subfolder is not None:
         cfg_kwargs["subfolder"] = subfolder
@@ -28,14 +30,10 @@ def create_ner_tagger(
     if hasattr(config, "classifier_dropout"):
         config.classifier_dropout = dropout
 
-    model_kwargs = {}
-    if subfolder is not None:
-        model_kwargs["subfolder"] = subfolder
-
     model = XLMRobertaForTokenClassification.from_pretrained(
         base_model_name,
         config=config,
-        **model_kwargs,
+        **cfg_kwargs,
     )
     return model
 
@@ -52,7 +50,7 @@ def compute_ner_accuracy(
     ignore_index: int = -100,
 ):
     """
-    Token-level evaluation for NER 
+    Token-level evaluation for NER.
     """
     model.to(device)
     model.eval()
@@ -130,97 +128,3 @@ def compute_ner_accuracy(
         "precision": float(prec),
         "recall": float(rec),
     }
-
-
-@torch.no_grad()
-def _get_word_embeddings(
-    model,
-    tokenizer,
-    sentences: List[List[str]],
-    device: str,
-    batch_size: int = 32,
-    max_length: int = 128,
-):
-    """
-    helper function for teacher student similarity.
-    """
-    model.to(device)
-    model.eval()
-
-    all_embs = []
-
-    for i in tqdm(range(0, len(sentences), batch_size), desc="NER embeddings"):
-        batch_sents = sentences[i : i + batch_size]
-        if not batch_sents:
-            continue
-
-        enc = tokenizer(
-            batch_sents,
-            is_split_into_words=True,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        enc = enc.to(device)
-
-        outputs = model(**enc, output_hidden_states=True)
-        last_hidden = outputs.hidden_states[-1]  # (B, L, H)
-
-        for b_idx in range(last_hidden.size(0)):
-            word_ids = enc.word_ids(batch_index=b_idx)
-            prev_wid = None
-            word_embs = []
-            for pos, wid in enumerate(word_ids):
-                if wid is None:
-                    continue
-                if wid != prev_wid:
-                    word_embs.append(last_hidden[b_idx, pos])
-                    prev_wid = wid
-            if word_embs:
-                all_embs.append(torch.stack(word_embs, dim=0).cpu())
-
-    if not all_embs:
-        hidden_size = model.config.hidden_size
-        return torch.empty(0, hidden_size)
-
-    return torch.cat(all_embs, dim=0)
-
-
-@torch.no_grad()
-def compute_ner_embedding_similarity(
-    student,
-    teacher,
-    tokenizer,
-    sentences: List[List[str]],
-    device: str,
-    batch_size: int = 32,
-    max_length: int = 128,
-):
-    """
-    Teacher–student similarity for NER:
-    mean cosine similarity between corresponding word embeddings.
-    Handles different hidden sizes by truncating to the smaller one.
-    """
-    teacher_embs = _get_word_embeddings(
-        teacher, tokenizer, sentences, device, batch_size, max_length
-    )
-    student_embs = _get_word_embeddings(
-        student, tokenizer, sentences, device, batch_size, max_length
-    )
-
-    if teacher_embs.size(0) == 0 or student_embs.size(0) == 0:
-        return {"similarity": 0.0}
-
-    # Align number of tokens
-    n = min(teacher_embs.size(0), student_embs.size(0))
-    teacher_embs = teacher_embs[:n]
-    student_embs = student_embs[:n]
-
-    # Align hidden size (768 vs 128) by truncating to the smaller dimension
-    h = min(teacher_embs.size(1), student_embs.size(1))
-    teacher_embs = teacher_embs[:, :h]
-    student_embs = student_embs[:, :h]
-
-    sims = F.cosine_similarity(student_embs, teacher_embs, dim=-1)
-    return {"similarity": float(sims.mean().item())}

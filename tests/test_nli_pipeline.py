@@ -4,7 +4,6 @@ from transformers import AutoTokenizer
 from src.evals.nli_eval import (
     create_nli_classifier,
     compute_nli_accuracy,
-    compute_nli_embedding_similarity,
 )
 from src.task_finetuning.nli_data import load_nli_split
 from src.task_finetuning.nli_train import train_nli_model
@@ -21,49 +20,41 @@ def main():
     teacher_name = "FacebookAI/xlm-roberta-base"
     student_name = "kkkamur07/hindi-xlm-roberta-33M"
 
-    # 1. Tokenizer (single, from teacher)
     tokenizer = AutoTokenizer.from_pretrained(teacher_name, use_fast=True)
 
-    # 2. Data
-    train_prem, train_hyp, train_labels, raw_to_id = load_nli_split(
-        train_path, split_key="train"
-    )
+    # Load splits with a shared label mapping
+    train_prem, train_hyp, train_labels, raw_to_id = load_nli_split(train_path)
     dev_prem, dev_hyp, dev_labels, _ = load_nli_split(
-        dev_path, split_key="dev", raw_to_id=raw_to_id
+        dev_path, raw_to_id=raw_to_id
     )
     test_prem, test_hyp, test_labels, _ = load_nli_split(
-        test_path, split_key="test", raw_to_id=raw_to_id
+        test_path, raw_to_id=raw_to_id
     )
-
-    ### testing on my laptop only here:
-    train_prem, train_hyp, train_labels = train_prem[:10], train_hyp[:10], train_labels[:10]
-    dev_prem,   dev_hyp,   dev_labels   = dev_prem[:5],   dev_hyp[:5],   dev_labels[:5]
-    test_prem,  test_hyp,  test_labels  = test_prem[:5],  test_hyp[:5],  test_labels[:5]
-
 
     num_labels = len(raw_to_id)
     print(
-        f"Train: {len(train_prem)}, Dev: {len(dev_prem)}, Test: {len(test_prem)}, "
-        f"num_labels = {num_labels}, mapping = {raw_to_id}"
+        f"Loaded NLI splits: "
+        f"train={len(train_prem)}, dev={len(dev_prem)}, test={len(test_prem)}, "
+        f"num_labels={num_labels}"
     )
 
-    # 3. create nli classifier
+    # Create models
     teacher = create_nli_classifier(
         teacher_name,
         num_labels=num_labels,
-        dropout=0.0, #can be included
+        dropout=0.0,
     ).to(device)
 
     student = create_nli_classifier(
         student_name,
         num_labels=num_labels,
-        dropout=0.0, 
+        dropout=0.0,
         subfolder="model",
     ).to(device)
 
-
-    # Fine-tune models
-    teacher_result = train_nli_model(
+    # Fine-tune teacher
+    print("\n[1] Fine-tuning TEACHER on NLI train/dev...")
+    teacher_res = train_nli_model(
         model=teacher,
         tokenizer=tokenizer,
         train_premises=train_prem,
@@ -74,10 +65,15 @@ def main():
         dev_labels=dev_labels,
         device=device,
         num_epochs=3,
+        batch_size=16,
+        learning_rate=2e-5,
+        max_length=128,
     )
-    teacher = teacher_result["model"]
+    teacher = teacher_res["model"]
 
-    student_result = train_nli_model(
+    # Fine-tune student
+    print("\n[2] Fine-tuning STUDENT on NLI train/dev...")
+    student_res = train_nli_model(
         model=student,
         tokenizer=tokenizer,
         train_premises=train_prem,
@@ -88,10 +84,14 @@ def main():
         dev_labels=dev_labels,
         device=device,
         num_epochs=3,
+        batch_size=16,
+        learning_rate=2e-5,
+        max_length=128,
     )
-    student = student_result["model"]
+    student = student_res["model"]
 
-    #Evaluation
+    # Evaluate on test set
+    print("\n[3] Evaluating TEACHER on NLI test set...")
     teacher_metrics = compute_nli_accuracy(
         teacher,
         tokenizer,
@@ -100,6 +100,8 @@ def main():
         test_labels,
         device,
     )
+
+    print("\n[4] Evaluating STUDENT on NLI test set...")
     student_metrics = compute_nli_accuracy(
         student,
         tokenizer,
@@ -110,24 +112,13 @@ def main():
     )
 
     print(
-        f"Fine-tuned teacher — acc: {teacher_metrics['accuracy']:.4f}, "
+        f"\nFine-tuned teacher — acc: {teacher_metrics['accuracy']:.4f}, "
         f"macro-F1: {teacher_metrics['macro_f1']:.4f}"
     )
     print(
         f"Fine-tuned student — acc: {student_metrics['accuracy']:.4f}, "
         f"macro-F1: {student_metrics['macro_f1']:.4f}"
     )
-
-    # embedding sim
-    sim = compute_nli_embedding_similarity(
-        student,
-        teacher,
-        tokenizer,
-        test_prem,
-        test_hyp,
-        device,
-    )
-    print(f"Teacher–student CLS similarity on test: {sim['similarity']:.4f}")
 
 
 if __name__ == "__main__":
