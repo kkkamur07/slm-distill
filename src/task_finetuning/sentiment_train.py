@@ -23,13 +23,16 @@ def train_sentiment_model(
     model.train()
 
     optimizer = AdamW(model.parameters(), lr=learning_rate)
-    history = []
+    history: List[Dict[str, Any]] = []
 
     for epoch in range(1, num_epochs + 1):
         model.train()
         total_loss = 0.0
 
-        for i in tqdm(range(0, len(train_texts), batch_size), desc=f"Epoch {epoch}"):
+        for i in tqdm(
+            range(0, len(train_texts), batch_size),
+            desc=f"Epoch {epoch}",
+        ):
             batch_texts = train_texts[i : i + batch_size]
             batch_labels = train_labels[i : i + batch_size]
 
@@ -41,7 +44,9 @@ def train_sentiment_model(
                 return_tensors="pt",
             ).to(device)
 
-            labels_tensor = torch.tensor(batch_labels, dtype=torch.long, device=device)
+            labels_tensor = torch.tensor(
+                batch_labels, dtype=torch.long, device=device
+            )
 
             optimizer.zero_grad()
             outputs = model(**enc, labels=labels_tensor)
@@ -51,9 +56,11 @@ def train_sentiment_model(
 
             total_loss += loss.item()
 
+        # average train loss for this epoch
         avg_loss = total_loss / max(1, len(train_texts) // batch_size)
         dev_metrics = None
 
+        # dev evaluation
         if dev_texts is not None and dev_labels is not None and len(dev_texts) > 0:
             dev_metrics = compute_sentiment_accuracy(
                 model,
@@ -63,6 +70,17 @@ def train_sentiment_model(
                 device,
                 batch_size=batch_size,
                 max_length=max_length,
+            )
+
+        # NEW: NLI/NER-style logging
+        print(f"\nEpoch {epoch}: train loss = {avg_loss:.4f}")
+        if dev_metrics is not None:
+            print(
+                f"Dev accuracy: {dev_metrics['accuracy']:.4f} | "
+                f"macro-F1: {dev_metrics['macro_f1']:.4f} | "
+                f"micro-F1: {dev_metrics['micro_f1']:.4f} | "
+                f"precision (macro): {dev_metrics['precision']:.4f} | "
+                f"recall (macro): {dev_metrics['recall']:.4f}"
             )
 
         history.append(

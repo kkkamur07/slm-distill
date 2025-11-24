@@ -51,13 +51,13 @@ def run_nli(
     teacher = create_nli_classifier(
         teacher_model_name,
         num_labels=num_labels,
-        dropout=0.0,
+        dropout=0.1,
     ).to(device)
 
     student = create_nli_classifier(
         student_model_name,
         num_labels=num_labels,
-        dropout=0.0,
+        dropout=0.1,
         subfolder=student_subfolder,
     ).to(device)
 

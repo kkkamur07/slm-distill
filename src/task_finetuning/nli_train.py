@@ -36,6 +36,19 @@ def train_nli_model(
     model.to(device)
     optimizer = AdamW(model.parameters(), lr=learning_rate)
 
+    # === DEBUG: track whether classifier weights actually change ===
+    tracked_param_name = "classifier.out_proj.weight"
+    tracked_prev = None
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if name == tracked_param_name:
+                tracked_prev = param.detach().clone()
+                print(f"[DEBUG] Tracking parameter: {tracked_param_name}, "
+                      f"mean abs value = {tracked_prev.abs().mean().item():.6e}")
+                break
+        if tracked_prev is None:
+            print(f"[DEBUG] Could not find parameter {tracked_param_name} to track.")
+
     n_train = len(train_premises)
     history: List[Dict[str, Any]] = []
 
@@ -104,6 +117,22 @@ def train_nli_model(
                 f"recall (macro): {dev_metrics['recall']:.4f}"
             )
 
+        # === DEBUG: check how much the tracked weights changed this epoch ===
+        if tracked_prev is not None:
+            with torch.no_grad():
+                current = None
+                for name, param in model.named_parameters():
+                    if name == tracked_param_name:
+                        current = param.detach().clone()
+                        break
+                if current is not None:
+                    diff = (current - tracked_prev).abs().mean().item()
+                    print(
+                        f"[DEBUG] Mean abs change in {tracked_param_name} "
+                        f"since last check: {diff:.6e}"
+                    )
+                    tracked_prev = current
+                    
         history.append(
             {
                 "epoch": epoch,
