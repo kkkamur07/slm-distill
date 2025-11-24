@@ -10,7 +10,12 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[Finetuning] Using device: {device}")
 
-    sentiment_results = run_sentiment(device=device)
+    sentiment_results = run_sentiment(
+        device=device,
+        lr_grid=[2e-5, 5e-5, 1e-4],
+        weight_decay=0.01,
+        early_stopping_patience=2,
+    )
 
     nli_results = run_nli(
         lr_grid=[2e-5, 5e-5, 1e-4],  # small LR grid
@@ -18,7 +23,12 @@ def main():
         early_stopping_patience=2,
     )
 
-    ner_results = run_ner(device=device)
+    ner_results = run_ner(
+        device=device,
+        lr_grid=[2e-5, 5e-5, 1e-4],
+        weight_decay=0.01,
+        early_stopping_patience=2,
+    )
 
     print("\n=== SUMMARY (test metrics) ===")
     print("Sentiment:", sentiment_results)

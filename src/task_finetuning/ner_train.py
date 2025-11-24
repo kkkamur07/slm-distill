@@ -20,6 +20,9 @@ def train_ner_model(
     max_length: int = 128,
     ignore_index: int = -100,
     eval_on_dev: bool = True,
+    weight_decay: float = 0.01,
+    early_stopping_patience: Optional[int] = None,
+    min_delta: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Inputs:
@@ -33,13 +36,21 @@ def train_ner_model(
       - {"model": model, "history": [...]}
     """
     model.to(device)
-    model.train()
 
-    optimizer = AdamW(model.parameters(), lr=learning_rate)
+    optimizer = AdamW(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
     n_train = len(train_sentences)
     history: List[Dict[str, Any]] = []
 
     print(f"\nStarting NER training on {n_train} sentences...")
+
+    # early stopping state
+    best_dev_acc: Optional[float] = None
+    best_state_dict: Optional[Dict[str, torch.Tensor]] = None
+    no_improve = 0
 
     for epoch in range(1, num_epochs + 1):
         model.train()
@@ -122,6 +133,17 @@ def train_ner_model(
                 f"recall (macro): {dev_metrics['recall']:.4f}"
             )
 
+            if early_stopping_patience is not None:
+                curr_acc = dev_metrics["accuracy"]
+                if best_dev_acc is None or curr_acc > best_dev_acc + min_delta:
+                    best_dev_acc = curr_acc
+                    best_state_dict = {
+                        k: v.detach().cpu() for k, v in model.state_dict().items()
+                    }
+                    no_improve = 0
+                else:
+                    no_improve += 1
+
         history.append(
             {
                 "epoch": epoch,
@@ -129,5 +151,20 @@ def train_ner_model(
                 "dev_metrics": dev_metrics,
             }
         )
+
+        if (
+            early_stopping_patience is not None
+            and best_dev_acc is not None
+            and no_improve >= early_stopping_patience
+        ):
+            print(
+                f"[NER] Early stopping after epoch {epoch} "
+                f"(no dev improvement for {early_stopping_patience} epochs)."
+            )
+            break
+
+    # restore best dev checkpoint if we tracked one
+    if best_state_dict is not None:
+        model.load_state_dict({k: v.to(device) for k, v in best_state_dict.items()})
 
     return {"model": model, "history": history}
