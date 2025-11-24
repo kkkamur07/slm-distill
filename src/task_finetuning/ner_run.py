@@ -15,26 +15,39 @@ def run_ner(
     student_subfolder: str | None = "model",  # None if not needed
     num_epochs: int = 3,
     batch_size: int = 16,
-    learning_rate: float = 2e-5,
+    learning_rate: float = 2e-5,  # kept for backward compatibility
     max_length: int = 128,
     device: str | None = None,
+    weight_decay: float = 0.01,
+    early_stopping_patience: int | None = 2,
+    min_delta: float = 0.0,
+    lr_grid: list[float] | None = None,
 ):
     """
     Fine-tune teacher and student on WikiANN Hindi NER and evaluate on test.
 
+    Adds:
+      - weight decay for AdamW
+      - early stopping on dev accuracy
+      - learning-rate grid search for BOTH teacher and student
+
     Returns:
         {
-            "teacher": {"metrics": {...}},
-            "student": {"metrics": {...}},
+            "teacher": {"metrics": {...}, "best_lr": float},
+            "student": {"metrics": {...}, "best_lr": float},
         }
     """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[NER] Using device: {device}")
 
+    # LR grid default, similar to NLI and sentiment
+    if lr_grid is None:
+        lr_grid = [2e-5, 5e-5, 1e-4]
+
     tokenizer = AutoTokenizer.from_pretrained(teacher_model_name, use_fast=True)
 
-    # Data
+    # Load dataset splits
     train_sentences, train_labels = load_wikiann_split(train_path)
     dev_sentences, dev_labels = load_wikiann_split(dev_path)
     test_sentences, test_labels = load_wikiann_split(test_path)
@@ -50,59 +63,72 @@ def run_ner(
         f"test={len(test_sentences)}, num_labels={num_labels}"
     )
 
-    # Models (starting from HF / KD checkpoints)
-    teacher = create_ner_tagger(
-        teacher_model_name,
-        num_labels=num_labels,
-        label2id=label2id,
-        id2label=id2label,
-        dropout=0.1,
-    ).to(device)
+    def grid_search_model(base_model_name: str, subfolder: str | None = None):
+        best_acc = -1.0
+        best_model = None
+        best_lr = None
 
-    student = create_ner_tagger(
-        student_model_name,
-        num_labels=num_labels,
-        label2id=label2id,
-        id2label=id2label,
-        dropout=0.1,
+        for lr in lr_grid:
+            print(f"\n[NER] Fine-tuning '{base_model_name}' with lr={lr:.1e}...")
+            model = create_ner_tagger(
+                base_model_name=base_model_name,
+                num_labels=num_labels,
+                label2id=label2id,
+                id2label=id2label,
+                dropout=0.1,  # fixed dropout as requested
+                subfolder=subfolder,
+            ).to(device)
+
+            res = train_ner_model(
+                model=model,
+                tokenizer=tokenizer,
+                train_sentences=train_sentences,
+                train_labels=train_labels,
+                dev_sentences=dev_sentences,
+                dev_labels=dev_labels,
+                device=device,
+                num_epochs=num_epochs,
+                batch_size=batch_size,
+                learning_rate=lr,
+                max_length=max_length,
+                ignore_index=-100,
+                eval_on_dev=True,
+                weight_decay=weight_decay,
+                early_stopping_patience=early_stopping_patience,
+                min_delta=min_delta,
+            )
+            model = res["model"]
+            last_dev = res["history"][-1]["dev_metrics"]
+            dev_acc = last_dev["accuracy"] if last_dev is not None else 0.0
+            print(f"[NER] {base_model_name}, lr={lr:.1e} dev acc={dev_acc:.4f}")
+
+            if dev_acc > best_acc:
+                best_acc = dev_acc
+                best_model = model
+                best_lr = lr
+
+        if best_model is None:
+            raise RuntimeError(f"[NER] Grid search failed for {base_model_name}")
+
+        print(
+            f"[NER] Best lr for {base_model_name}: {best_lr:.1e} "
+            f"(dev acc={best_acc:.4f})"
+        )
+        return best_model, best_lr
+
+    # Teacher grid search
+    teacher, best_lr_teacher = grid_search_model(
+        base_model_name=teacher_model_name,
+        subfolder=None,
+    )
+
+    # Student grid search
+    student, best_lr_student = grid_search_model(
+        base_model_name=student_model_name,
         subfolder=student_subfolder,
-    ).to(device)
-
-    # Fine-tune teacher
-    print("[NER] Fine-tuning TEACHER...")
-    teacher_res = train_ner_model(
-        model=teacher,
-        tokenizer=tokenizer,
-        train_sentences=train_sentences,
-        train_labels=train_labels,
-        dev_sentences=dev_sentences,
-        dev_labels=dev_labels,
-        device=device,
-        num_epochs=num_epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        max_length=max_length,
     )
-    teacher = teacher_res["model"]
 
-    # Fine-tune student
-    print("[NER] Fine-tuning STUDENT...")
-    student_res = train_ner_model(
-        model=student,
-        tokenizer=tokenizer,
-        train_sentences=train_sentences,
-        train_labels=train_labels,
-        dev_sentences=dev_sentences,
-        dev_labels=dev_labels,
-        device=device,
-        num_epochs=num_epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        max_length=max_length,
-    )
-    student = student_res["model"]
-
-    # Evaluate on test
+    # Final test evaluation
     print("[NER] Evaluating TEACHER on test...")
     teacher_metrics = compute_ner_accuracy(
         teacher,
@@ -128,8 +154,8 @@ def run_ner(
     print("[NER] STUDENT metrics:", student_metrics)
 
     return {
-        "teacher": {"metrics": teacher_metrics},
-        "student": {"metrics": student_metrics},
+        "teacher": {"metrics": teacher_metrics, "best_lr": best_lr_teacher},
+        "student": {"metrics": student_metrics, "best_lr": best_lr_student},
     }
 
 

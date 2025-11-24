@@ -1,30 +1,40 @@
 import torch
 from transformers import AutoTokenizer
 
-from src.evals.sentiment_eval import create_sentiment_classifier, compute_sentiment_accuracy
+from src.evals.sentiment_eval import (
+    create_sentiment_classifier,
+    compute_sentiment_accuracy,
+)
 from src.task_finetuning.sentiment_data import load_sentiment_csv
 from src.task_finetuning.sentiment_train import train_sentiment_model
 
 
 def run_sentiment(
     train_path: str = "data/hin/sentiment_hi_train.csv",
-    dev_path: str = "data/hin/sentiment_hi_val.csv",
+    val_path: str = "data/hin/sentiment_hi_val.csv",
     test_path: str = "data/hin/sentiment_hi_test.csv",
     teacher_model_name: str = "FacebookAI/xlm-roberta-base",
     student_model_name: str = "kkkamur07/hindi-xlm-roberta-33M",
-    student_subfolder: str | None = "model",
-    num_epochs: int = 5,
+    student_subfolder: str | None = "model",  # None if not needed
+    num_labels: int = 3,
+    num_epochs: int = 3,
     batch_size: int = 16,
-    lr_grid: list[float] | None = None,
+    learning_rate: float = 2e-5,  # kept for backwards compat, not used if lr_grid is given
     max_length: int = 128,
+    device: str | None = None,
     weight_decay: float = 0.01,
     early_stopping_patience: int | None = 2,
     min_delta: float = 0.0,
-    device: str | None = None,
+    lr_grid: list[float] | None = None,
+    dropout: float = 0.0,
 ):
     """
-    Sentiment fine-tuning with LR grid search for BOTH teacher and student.
-    Uses dev accuracy to pick the best LR.
+    Fine-tune teacher and student on Hindi sentiment and evaluate on test.
+
+    Adds:
+      - weight decay
+      - early stopping on dev accuracy
+      - LR grid search for BOTH teacher and student (dev accuracy as criterion).
     """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -35,21 +45,17 @@ def run_sentiment(
 
     tokenizer = AutoTokenizer.from_pretrained(teacher_model_name, use_fast=True)
 
-    # load data
+    # Data
     train_texts, train_labels = load_sentiment_csv(train_path)
-    dev_texts, dev_labels = load_sentiment_csv(dev_path)
+    val_texts, val_labels = load_sentiment_csv(val_path)
     test_texts, test_labels = load_sentiment_csv(test_path)
 
-    num_labels = len(set(train_labels))
-    label2id = {str(i): i for i in range(num_labels)}
-    id2label = {i: str(i) for i in range(num_labels)}
-
     print(
-        f"[Sentiment] train={len(train_texts)}, dev={len(dev_texts)}, "
+        f"[Sentiment] train={len(train_texts)}, val={len(val_texts)}, "
         f"test={len(test_texts)}, num_labels={num_labels}"
     )
 
-    # ---- helper: grid search for one HF model id ----
+    # helper: LR grid search for one model
     def grid_search_model(base_model_name: str, subfolder: str | None = None):
         best_acc = -1.0
         best_model = None
@@ -58,11 +64,9 @@ def run_sentiment(
         for lr in lr_grid:
             print(f"\n[Sentiment] Fine-tuning '{base_model_name}' with lr={lr:.1e}...")
             model = create_sentiment_classifier(
-                base_model_name,
+                base_model_name=base_model_name,
                 num_labels=num_labels,
-                label2id=label2id,
-                id2label=id2label,
-                dropout=0.0,
+                dropout=dropout,
                 subfolder=subfolder,
             ).to(device)
 
@@ -71,8 +75,8 @@ def run_sentiment(
                 tokenizer=tokenizer,
                 train_texts=train_texts,
                 train_labels=train_labels,
-                dev_texts=dev_texts,
-                dev_labels=dev_labels,
+                dev_texts=val_texts,
+                dev_labels=val_labels,
                 device=device,
                 num_epochs=num_epochs,
                 batch_size=batch_size,
@@ -102,29 +106,30 @@ def run_sentiment(
         )
         return best_model, best_lr
 
-    # ---- teacher grid search ----
+    # Teacher grid search
     teacher, best_lr_teacher = grid_search_model(
         base_model_name=teacher_model_name,
         subfolder=None,
     )
 
-    # ---- student grid search ----
+    # Student grid search
     student, best_lr_student = grid_search_model(
         base_model_name=student_model_name,
         subfolder=student_subfolder,
     )
 
-    # ---- test eval ----
+    # Final test evaluation
     print("\n[Sentiment] Evaluating TEACHER on test...")
     teacher_metrics = compute_sentiment_accuracy(
         teacher,
         tokenizer,
         test_texts,
         test_labels,
-        device,
+        device=device,
         batch_size=batch_size,
         max_length=max_length,
     )
+    print("[Sentiment] TEACHER metrics:", teacher_metrics)
 
     print("\n[Sentiment] Evaluating STUDENT on test...")
     student_metrics = compute_sentiment_accuracy(
@@ -132,16 +137,17 @@ def run_sentiment(
         tokenizer,
         test_texts,
         test_labels,
-        device,
+        device=device,
         batch_size=batch_size,
         max_length=max_length,
     )
-
-    print("\n[Sentiment] Final test results:")
-    print("  Teacher:", teacher_metrics, f"(best lr={best_lr_teacher:.1e})")
-    print("  Student:", student_metrics, f"(best lr={best_lr_student:.1e})")
+    print("[Sentiment] STUDENT metrics:", student_metrics)
 
     return {
         "teacher": {"metrics": teacher_metrics, "best_lr": best_lr_teacher},
         "student": {"metrics": student_metrics, "best_lr": best_lr_student},
     }
+
+
+if __name__ == "__main__":
+    run_sentiment()

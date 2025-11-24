@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Optional, Dict, Any
 import torch
 from torch import nn
 from torch.optim import AdamW
@@ -24,7 +24,7 @@ def train_sentiment_model(
     min_delta: float = 0.0,
 ) -> Dict[str, Any]:
     """
-    Fine-tune a sentiment classifier with optional weight decay and early stopping.
+    Fine-tune a sentiment classifier with optional weight decay + early stopping.
 
     Returns:
       {
@@ -60,7 +60,7 @@ def train_sentiment_model(
 
         for start in tqdm(
             range(0, n_train, batch_size),
-            desc=f"Epoch {epoch}/{num_epochs}",
+            desc=f"[Sentiment] Epoch {epoch}/{num_epochs}",
         ):
             batch_indices = idxs[start : start + batch_size]
             if not batch_indices:
@@ -89,7 +89,7 @@ def train_sentiment_model(
             epoch_loss += loss.item()
             num_batches += 1
 
-        avg_loss = epoch_loss / max(1, num_batches)
+        avg_loss = epoch_loss / max(num_batches, 1)
         print(f"\n[Sentiment] Epoch {epoch}: train loss = {avg_loss:.4f}")
 
         dev_metrics = None
@@ -130,17 +130,19 @@ def train_sentiment_model(
             }
         )
 
-        if early_stopping_patience is not None and best_dev_acc is not None:
-            if no_improve >= early_stopping_patience:
-                print(
-                    f"[Sentiment] Early stopping after epoch {epoch} "
-                    f"(no dev improvement for {early_stopping_patience} epochs)."
-                )
-                break
+        if (
+            early_stopping_patience is not None
+            and best_dev_acc is not None
+            and no_improve >= early_stopping_patience
+        ):
+            print(
+                f"[Sentiment] Early stopping after epoch {epoch} "
+                f"(no dev improvement for {early_stopping_patience} epochs)."
+            )
+            break
 
     if best_state_dict is not None:
-        model.load_state_dict(
-            {k: v.to(device) for k, v in best_state_dict.items()}
-        )
+        model.load_state_dict({k: v.to(device) for k, v in best_state_dict.items()})
 
     return {"model": model, "history": history}
+

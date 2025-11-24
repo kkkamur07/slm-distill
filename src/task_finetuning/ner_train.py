@@ -25,15 +25,24 @@ def train_ner_model(
     min_delta: float = 0.0,
 ) -> Dict[str, Any]:
     """
-    Inputs:
-      - model: XLMRobertaForTokenClassification (teacher or student)
-      - tokenizer: matching tokenizer (fast, with word_ids)
-      - train_sentences / train_labels: word-level tokens and label ids
-      - dev_sentences / dev_labels: dev set (can be None)
-      - device: "cuda" or "cpu"
+    Train NER model with optional weight decay and early stopping.
+
+    Args:
+        model: XLMRobertaForTokenClassification (teacher or student).
+        tokenizer: matching tokenizer (fast, with word_ids).
+        train_sentences: list of tokenized sentences, each a list of strings.
+        train_labels: list of label sequences, each a list of ints.
+        dev_sentences/dev_labels: dev set (or None).
+        device: 'cuda' or 'cpu'.
 
     Returns:
-      - {"model": model, "history": [...]}
+        {
+            "model": model (restored to best dev checkpoint if early stopping),
+            "history": [
+                {"epoch": int, "train_loss": float, "dev_metrics": dict | None},
+                ...
+            ],
+        }
     """
     model.to(device)
 
@@ -42,6 +51,7 @@ def train_ner_model(
         lr=learning_rate,
         weight_decay=weight_decay,
     )
+
     n_train = len(train_sentences)
     history: List[Dict[str, Any]] = []
 
@@ -90,7 +100,7 @@ def train_ner_model(
                     if wid is None:
                         cur_labels.append(ignore_index)
                     elif wid != prev_wid:
-                        # first subword of this word
+                        # first subword: use the word label
                         cur_labels.append(int(sent_labels[wid]))
                         prev_wid = wid
                     else:
@@ -133,6 +143,7 @@ def train_ner_model(
                 f"recall (macro): {dev_metrics['recall']:.4f}"
             )
 
+            # early stopping bookkeeping
             if early_stopping_patience is not None:
                 curr_acc = dev_metrics["accuracy"]
                 if best_dev_acc is None or curr_acc > best_dev_acc + min_delta:
@@ -152,6 +163,7 @@ def train_ner_model(
             }
         )
 
+        # check early stopping condition
         if (
             early_stopping_patience is not None
             and best_dev_acc is not None
