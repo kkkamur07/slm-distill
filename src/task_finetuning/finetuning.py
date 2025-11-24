@@ -12,20 +12,20 @@ def main():
 
     sentiment_results = run_sentiment(
         device=device,
-        lr_grid=[2e-5, 5e-5, 1e-4],
+        lr_grid=[1e-5, 3e-5, 1e-4],
         weight_decay=0.01,
         early_stopping_patience=2,
     )
 
     nli_results = run_nli(
-        lr_grid=[2e-5, 5e-5, 1e-4],  # small LR grid
+        lr_grid=[1e-5, 3e-5, 1e-4],  
         weight_decay=0.01,
         early_stopping_patience=2,
     )
 
     ner_results = run_ner(
         device=device,
-        lr_grid=[2e-5, 5e-5, 1e-4],
+        lr_grid=[1e-5, 3e-5, 1e-4],
         weight_decay=0.01,
         early_stopping_patience=2,
     )
