@@ -11,7 +11,13 @@ def main():
     print(f"[Finetuning] Using device: {device}")
 
     sentiment_results = run_sentiment(device=device)
-    nli_results = run_nli(device=device)
+
+    nli_results = run_nli(
+        lr_grid=[2e-5, 5e-5, 1e-4],  # small LR grid
+        weight_decay=0.01,
+        early_stopping_patience=2,
+    )
+
     ner_results = run_ner(device=device)
 
     print("\n=== SUMMARY (test metrics) ===")

@@ -1,5 +1,3 @@
-# src/task_finetuning/nli_run.py
-
 import torch
 from transformers import AutoTokenizer
 
@@ -14,21 +12,22 @@ def run_nli(
     test_path: str = "data/hin/xnli_hi_test.json",
     teacher_model_name: str = "FacebookAI/xlm-roberta-base",
     student_model_name: str = "kkkamur07/hindi-xlm-roberta-33M",
-    student_subfolder: str | None = "model",  # None if not needed
-    num_epochs: int = 3,
+    student_subfolder: str | None = "model",
+    num_epochs: int = 5,
     batch_size: int = 16,
-    learning_rate: float = 2e-5,
+    base_learning_rate: float = 2e-5,
+    lr_grid: list[float] | None = None,
     max_length: int = 128,
+    weight_decay: float = 0.01,
+    early_stopping_patience: int | None = 2,
+    min_delta: float = 0.0,
     device: str | None = None,
 ):
     """
     Fine-tune teacher and student on Hindi XNLI and evaluate on test.
 
-    Returns:
-        {
-            "teacher": {"metrics": {...}},
-            "student": {"metrics": {...}},
-        }
+    - Teacher: trained once with base_learning_rate.
+    - Student: LR tuned over lr_grid (if provided), using dev accuracy.
     """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -47,22 +46,14 @@ def run_nli(
         f"test={len(test_prem)}, num_labels={num_labels}"
     )
 
-    # Models (starting from HF checkpoints / KD checkpoints)
+    # ---------- TEACHER: single LR ----------
     teacher = create_nli_classifier(
         teacher_model_name,
         num_labels=num_labels,
-        dropout=0.1,
+        dropout=0.0,
     ).to(device)
 
-    student = create_nli_classifier(
-        student_model_name,
-        num_labels=num_labels,
-        dropout=0.1,
-        subfolder=student_subfolder,
-    ).to(device)
-
-    # Fine-tune teacher
-    print("[NLI] Fine-tuning TEACHER...")
+    print("\n[NLI] Fine-tuning TEACHER...")
     teacher_res = train_nli_model(
         model=teacher,
         tokenizer=tokenizer,
@@ -75,62 +66,97 @@ def run_nli(
         device=device,
         num_epochs=num_epochs,
         batch_size=batch_size,
-        learning_rate=learning_rate,
+        learning_rate=base_learning_rate,
         max_length=max_length,
+        eval_on_dev=True,
+        weight_decay=weight_decay,
+        early_stopping_patience=early_stopping_patience,
+        min_delta=min_delta,
     )
     teacher = teacher_res["model"]
 
-    # Fine-tune student
-    print("[NLI] Fine-tuning STUDENT...")
-    student_res = train_nli_model(
-        model=student,
-        tokenizer=tokenizer,
-        train_premises=train_prem,
-        train_hypotheses=train_hyp,
-        train_labels=train_labels,
-        dev_premises=dev_prem,
-        dev_hypotheses=dev_hyp,
-        dev_labels=dev_labels,
-        device=device,
-        num_epochs=num_epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        max_length=max_length,
-    )
-    student = student_res["model"]
+    # ---------- STUDENT: LR tuning ----------
+    if lr_grid is None:
+        lr_grid = [base_learning_rate]
 
-    # Evaluate on test
-    print("[NLI] Evaluating TEACHER on test...")
+    best_student_acc = -1.0
+    best_student_model = None
+    best_lr = None
+
+    for lr in lr_grid:
+        print(f"\n[NLI] Fine-tuning STUDENT with lr={lr:.1e}...")
+        student = create_nli_classifier(
+            student_model_name,
+            num_labels=num_labels,
+            dropout=0.0,
+            subfolder=student_subfolder,
+        ).to(device)
+
+        res = train_nli_model(
+            model=student,
+            tokenizer=tokenizer,
+            train_premises=train_prem,
+            train_hypotheses=train_hyp,
+            train_labels=train_labels,
+            dev_premises=dev_prem,
+            dev_hypotheses=dev_hyp,
+            dev_labels=dev_labels,
+            device=device,
+            num_epochs=num_epochs,
+            batch_size=batch_size,
+            learning_rate=lr,
+            max_length=max_length,
+            eval_on_dev=True,
+            weight_decay=weight_decay,
+            early_stopping_patience=early_stopping_patience,
+            min_delta=min_delta,
+        )
+        student = res["model"]
+        last_dev_metrics = res["history"][-1]["dev_metrics"]
+        dev_acc = last_dev_metrics["accuracy"] if last_dev_metrics is not None else 0.0
+
+        print(f"[NLI] STUDENT lr={lr:.1e} dev accuracy={dev_acc:.4f}")
+
+        if dev_acc > best_student_acc:
+            best_student_acc = dev_acc
+            best_student_model = student
+            best_lr = lr
+
+    if best_student_model is None:
+        raise RuntimeError("Student training failed for all learning rates.")
+    student = best_student_model
+    print(f"\n[NLI] Best STUDENT lr={best_lr:.1e} with dev acc={best_student_acc:.4f}")
+
+    # ---------- Evaluate both on test set ----------
+    print("\n[NLI] Evaluating TEACHER on test...")
     teacher_metrics = compute_nli_accuracy(
         teacher,
         tokenizer,
         test_prem,
         test_hyp,
         test_labels,
-        device=device,
+        device,
         batch_size=batch_size,
         max_length=max_length,
     )
-    print("[NLI] TEACHER metrics:", teacher_metrics)
 
-    print("[NLI] Evaluating STUDENT on test...")
+    print("\n[NLI] Evaluating STUDENT on test...")
     student_metrics = compute_nli_accuracy(
         student,
         tokenizer,
         test_prem,
         test_hyp,
         test_labels,
-        device=device,
+        device,
         batch_size=batch_size,
         max_length=max_length,
     )
-    print("[NLI] STUDENT metrics:", student_metrics)
+
+    print("\n[NLI] Results:")
+    print("  Teacher:", teacher_metrics)
+    print("  Student:", student_metrics)
 
     return {
         "teacher": {"metrics": teacher_metrics},
-        "student": {"metrics": student_metrics},
+        "student": {"metrics": student_metrics, "best_lr": best_lr},
     }
-
-
-if __name__ == "__main__":
-    run_nli()

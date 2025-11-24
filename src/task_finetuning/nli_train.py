@@ -5,6 +5,7 @@ from torch.optim import AdamW
 from tqdm import tqdm
 from src.evals.nli_eval import compute_nli_accuracy
 
+
 def train_nli_model(
     model: nn.Module,
     tokenizer,
@@ -20,6 +21,9 @@ def train_nli_model(
     learning_rate: float = 2e-5,
     max_length: int = 128,
     eval_on_dev: bool = True,
+    weight_decay: float = 0.01,
+    early_stopping_patience: Optional[int] = None,
+    min_delta: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Inputs:
@@ -30,11 +34,15 @@ def train_nli_model(
 
     Returns:
       - dict with:
-          "model": the trained model,
+          "model": the trained model (restored to best dev checkpoint if early stopping),
           "history": list of {"epoch": int, "train_loss": float, "dev_metrics": dict | None}
     """
     model.to(device)
-    optimizer = AdamW(model.parameters(), lr=learning_rate)
+    optimizer = AdamW(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
 
     # === DEBUG: track whether classifier weights actually change ===
     tracked_param_name = "classifier.out_proj.weight"
@@ -43,8 +51,10 @@ def train_nli_model(
         for name, param in model.named_parameters():
             if name == tracked_param_name:
                 tracked_prev = param.detach().clone()
-                print(f"[DEBUG] Tracking parameter: {tracked_param_name}, "
-                      f"mean abs value = {tracked_prev.abs().mean().item():.6e}")
+                print(
+                    f"[DEBUG] Tracking parameter: {tracked_param_name}, "
+                    f"mean abs value = {tracked_prev.abs().mean().item():.6e}"
+                )
                 break
         if tracked_prev is None:
             print(f"[DEBUG] Could not find parameter {tracked_param_name} to track.")
@@ -54,12 +64,18 @@ def train_nli_model(
 
     print(f"\nStarting NLI training on {n_train} examples...")
 
+    # early stopping state
+    best_dev_acc: Optional[float] = None
+    best_state_dict: Optional[Dict[str, torch.Tensor]] = None
+    no_improve = 0
+
     for epoch in range(1, num_epochs + 1):
         model.train()
         epoch_loss = 0.0
         num_batches = 0
 
-        idxs = torch.randperm(n_train).tolist()  # simple shuffle
+        # simple shuffle
+        idxs = torch.randperm(n_train).tolist()
 
         for start in tqdm(
             range(0, n_train, batch_size),
@@ -117,6 +133,19 @@ def train_nli_model(
                 f"recall (macro): {dev_metrics['recall']:.4f}"
             )
 
+            # ---- early stopping bookkeeping on dev accuracy ----
+            if early_stopping_patience is not None:
+                curr_acc = dev_metrics["accuracy"]
+                if best_dev_acc is None or curr_acc > best_dev_acc + min_delta:
+                    best_dev_acc = curr_acc
+                    # store on CPU to avoid GPU memory growth
+                    best_state_dict = {
+                        k: v.detach().cpu() for k, v in model.state_dict().items()
+                    }
+                    no_improve = 0
+                else:
+                    no_improve += 1
+
         # === DEBUG: check how much the tracked weights changed this epoch ===
         if tracked_prev is not None:
             with torch.no_grad():
@@ -132,13 +161,29 @@ def train_nli_model(
                         f"since last check: {diff:.6e}"
                     )
                     tracked_prev = current
-                    
+
+        # record history for this epoch
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": float(avg_loss),
                 "dev_metrics": dev_metrics,
             }
+        )
+
+        # ---- check early stopping condition after each epoch ----
+        if early_stopping_patience is not None and best_dev_acc is not None:
+            if no_improve >= early_stopping_patience:
+                print(
+                    f"Early stopping triggered after epoch {epoch} "
+                    f"(no dev improvement for {early_stopping_patience} epochs)."
+                )
+                break
+
+    # restore best dev checkpoint if we tracked one
+    if best_state_dict is not None:
+        model.load_state_dict(
+            {k: v.to(device) for k, v in best_state_dict.items()}
         )
 
     return {"model": model, "history": history}
