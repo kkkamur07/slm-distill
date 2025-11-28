@@ -5,7 +5,7 @@ names:
 
 # Teacher Model
 teacher:
-  model_path: "/Users/krishuagarwal/Desktop/Programming/python/minigeneformer/models/geneformer-10M"
+  model_path: "xlm-roberta-base"
 
 # Student Model
 model:
@@ -14,13 +14,13 @@ model:
   num_hidden_layers: 6
   num_attention_heads: 8
   intermediate_size: 1024
-  max_position_embeddings: 512
+  max_sequence_length: 256
   hidden_dropout_prob: 0.1
   attention_probs_dropout_prob: 0.1
 
 # Data
 data:
-  dataset_path: ""
+  dataset_path: "/home/krrish/Desktop/Programming/slm-distill/dataset/hin/test"
   val_dataset_path: ""
   train_split: 0.995
   num_workers: 16
@@ -50,6 +50,7 @@ training:
   save_every: 5000
   keep_last_k: 2
   mlm_probability: 0.15
+  epochs: 3
 
 # Hardware
 hardware:

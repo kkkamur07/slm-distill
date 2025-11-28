@@ -80,10 +80,15 @@ class DistillationTrainer:
         # Hyperparameters
         self.temperature = cfg.training.temperature
         self.alpha = cfg.training.alpha
-        self.max_steps = cfg.training.total_steps
         self.val_every = cfg.training.val_every
         self.log_every = cfg.training.log_every
+        self.epochs = cfg.training.epochs
         
+        if self.epochs is not None:
+            steps_per_epoch = len(self.train_loader) // cfg.training.grad_accum_steps
+            self.max_steps = steps_per_epoch * self.epochs
+        else:
+            self.max_steps = cfg.training.total_steps
         
         if self.logger:
             self.logger.info("DistillationTrainer initialized")
@@ -203,7 +208,7 @@ class DistillationTrainer:
         
         while self.global_step < self.max_steps:
             
-            for batch in tqdm(self.train_loader, desc="Training Batches"):
+            for batch in tqdm(self.train_loader, desc=f"Epoch {(self.global_step // (len(self.train_loader) // self.cfg.training.grad_accum_steps)) + 1}"):
                 # Training step
                 metrics = self.train_step(batch)
 

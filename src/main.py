@@ -3,8 +3,8 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import numpy as np
 from tqdm import tqdm
-from transformers.trainer_pt_utils import LengthGroupedSampler
-from transformers import AutoTokenizer
+
+from transformers import XLMRobertaTokenizerFast, AutoTokenizer
 from transformers import DataCollatorForLanguageModeling
 
 from src.models.teacher_model import TeacherModel
@@ -16,8 +16,14 @@ from torch.utils.data import DataLoader
 from torch.optim import AdamW
 
 
-@hydra.main(version_base=None, config_path="/home/krrish/Desktop/Programming/geneformer-scratch/configs", config_name="config")
+@hydra.main(version_base=None, config_path="/home/krrish/Desktop/Programming/slm-distill/configs", config_name="config")
 def main(cfg: DictConfig):
+    
+    # Initialize logger
+    logger = TrainingLogger(
+        log_dir=cfg.paths.log_dir,
+        experiment_name=cfg.names.experiment_name
+    )
     
     # Print config
     logger.info(OmegaConf.to_yaml(cfg))
@@ -31,13 +37,7 @@ def main(cfg: DictConfig):
     # Device
     device = torch.device(cfg.hardware.device if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")  
-    
-    # Initialize logger
-    logger = TrainingLogger(
-        log_dir=cfg.paths.log_dir,
-        experiment_name=cfg.names.experiment_name
-    )
-    
+
     logger.info("🔧 Loading models...")
     
     # Load teacher model & tokenizer
@@ -53,7 +53,6 @@ def main(cfg: DictConfig):
         num_hidden_layers=cfg.model.num_hidden_layers,
         num_attention_heads=cfg.model.num_attention_heads,
         intermediate_size=cfg.model.intermediate_size,
-        max_position_embeddings=cfg.model.max_position_embeddings,
         hidden_dropout_prob=cfg.model.hidden_dropout_prob,
         attention_probs_dropout_prob=cfg.model.attention_probs_dropout_prob,
         device=device,
@@ -67,10 +66,29 @@ def main(cfg: DictConfig):
     student = torch.compile(student)
     
     # Load the datasets
-    logger.info("Loading datasets...")
+    logger.info("Loading training dataset")
     
-    train_dataset = NativeSLMData(cfg.data.dataset_path, train_split=cfg.data.train_split, tokenizer=tokenizer, split="train", cache_dir=cfg.paths.cache_dir)
-    val_dataset = NativeSLMData(cfg.data.dataset_path, train_split=(1 - cfg.data.train_split), tokenizer=tokenizer, split="val", cache_dir=cfg.paths.cache_dir)
+    train_dataset = NativeSLMData(
+        data_path=cfg.data.dataset_path, 
+        train_split=cfg.data.train_split, 
+        tokenizer=tokenizer, 
+        train=True,
+        # cache_dir=cfg.paths.cache_dir,
+        max_length=cfg.model.max_sequence_length,
+    )
+    
+    logger.info("Loading validation dataset")
+    
+    val_dataset = NativeSLMData(
+        data_path=cfg.data.dataset_path, 
+        train_split=cfg.data.train_split, 
+        tokenizer=tokenizer, 
+        train=False,
+        # cache_dir=cfg.paths.cache_dir,
+        max_length=cfg.model.max_sequence_length,
+    )
+    
+    logger.info(f"Datasets loaded: {len(train_dataset):,} training samples, {len(val_dataset):,} validation samples")
 
     # Creating samplers, collators and data loaders
     logger.info("Creating Datacollators & loaders")

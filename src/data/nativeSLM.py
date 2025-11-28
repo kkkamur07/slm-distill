@@ -12,12 +12,14 @@ class NativeSLMData(TorchDataset):
         data_path: str,
         tokenizer,
         max_length: int,
-        split: str = "train",
+        train: bool = True,
         train_split: float = 0.95,
         seed: int = 42,
         cache_dir: str = None
     ):
         cache_path = None
+
+        split = "train" if train else "val"
         
         if cache_dir:
             cache_path = os.path.join(
@@ -33,7 +35,7 @@ class NativeSLMData(TorchDataset):
         dataset = Dataset.from_pandas(df)
         
         split_dataset = dataset.train_test_split(train_size=train_split, seed=seed)
-        dataset = split_dataset['train'] if split == 'train' else split_dataset['test']
+        dataset = split_dataset['train'] if train else split_dataset['test']
         
         self.dataset = dataset.map(
             
