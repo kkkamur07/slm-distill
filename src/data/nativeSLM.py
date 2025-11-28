@@ -32,7 +32,7 @@ class NativeSLMData(TorchDataset):
                 return
         
         df = pd.read_parquet(data_path)
-        dataset = Dataset.from_pandas(df)
+        dataset = Dataset.from_pandas(df) # Problem is here.
         
         split_dataset = dataset.train_test_split(train_size=train_split, seed=seed)
         dataset = split_dataset['train'] if train else split_dataset['test']

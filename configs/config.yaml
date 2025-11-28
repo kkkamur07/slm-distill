@@ -20,7 +20,7 @@ model:
 
 # Data
 data:
-  dataset_path: "/home/krrish/Desktop/Programming/slm-distill/dataset/hin/test"
+  dataset_path: "/home/krrish/Desktop/Programming/slm-distill/dataset/hin/train"
   val_dataset_path: ""
   train_split: 0.995
   num_workers: 16
@@ -63,7 +63,7 @@ paths:
   output_dir: "outputs/${names.experiment_name}"
   teacher_model_path: "${teacher.model_path}"
   dataset_path: "${data.dataset_path}"
-  cache_dir: "data/cache"
+  cache_dir: "dataset/cache"
 
 # Seed
 seed: 42

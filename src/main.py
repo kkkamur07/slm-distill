@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-from transformers import XLMRobertaTokenizerFast, AutoTokenizer
+from transformers import AutoTokenizer
 from transformers import DataCollatorForLanguageModeling
 
 from src.models.teacher_model import TeacherModel
@@ -73,7 +73,7 @@ def main(cfg: DictConfig):
         train_split=cfg.data.train_split, 
         tokenizer=tokenizer, 
         train=True,
-        # cache_dir=cfg.paths.cache_dir,
+        cache_dir=cfg.paths.cache_dir,
         max_length=cfg.model.max_sequence_length,
     )
     
@@ -84,7 +84,7 @@ def main(cfg: DictConfig):
         train_split=cfg.data.train_split, 
         tokenizer=tokenizer, 
         train=False,
-        # cache_dir=cfg.paths.cache_dir,
+        cache_dir=cfg.paths.cache_dir,
         max_length=cfg.model.max_sequence_length,
     )
     
