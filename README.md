@@ -24,8 +24,8 @@ We have currently trained it on 100M tokens of hindi
 - [ ] Redue the vocabulary of tokenizer from 250004 to only hindi words
 - [X] Add FlashAttention, ROPE so that you can have more fine grained control of the student's architecture
 - [ ] Adaptive temperature and alpha scaling with some regularization in the loss so that model can generalize well. 
-- [ ] Varied & Diverse data and increase data
-- [ ] Cache the tokens because it takes a lot of time 
+- [X] Varied & Diverse data and increase data
+- [X] Cache the tokens because it takes a lot of time 
 - [ ] Teacher model should be studied in detail
 - [X] More control over the hyperparameters
 - [ ] CUDA Kernel to accelerate training

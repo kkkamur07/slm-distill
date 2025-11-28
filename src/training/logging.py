@@ -97,16 +97,22 @@ class TrainingLogger:
         }
         self.log_metrics(step, metrics)
     
-    def log_validation(self, step: int, val_loss: float, **kwargs):
+    def log_validation(self, step: int, val_loss: float, teacher_metrics: dict = None, student_metrics: dict = None, **kwargs):
 
         metrics = {
             "val_loss": val_loss,
+            "teacher_perplexity": teacher_metrics.get('perplexity') if teacher_metrics else None,
+            "teacher_masked_accuracy": teacher_metrics.get('masked_accuracy') if teacher_metrics else None,
+            "student_perplexity": student_metrics.get('perplexity') if student_metrics else None,
+            "student_masked_accuracy": student_metrics.get('masked_accuracy') if student_metrics else None,
             **kwargs
         }
+        
         self.log_metrics(step, metrics)
         self.info(f"{'='*60}")
         self.info(f"📊 Validation at step {step}")
         self.info(f"   Loss: {val_loss:.4f}")
+        
         for k, v in kwargs.items():
             self.info(f"   {k}: {v:.4f}" if isinstance(v, float) else f"   {k}: {v}")
         self.info(f"{'='*60}")
@@ -115,6 +121,7 @@ class TrainingLogger:
 
         self.info(f"{'='*60}")
         self.info("⚙️  Configuration:")
+        
         for k, v in config.items():
             self.info(f"   {k}: {v}")
         self.info(f"{'='*60}")

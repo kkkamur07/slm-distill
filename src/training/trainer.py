@@ -11,7 +11,7 @@ from .checkpointing import CheckpointManager
 from .accumulator import AmpGrad
 from .scheduler import WarmCosineLR
 from .loss import distillation_loss
-
+from ..evals.evals import evaluate
 
 class DistillationTrainer:
     
@@ -116,7 +116,7 @@ class DistillationTrainer:
                 return_logits=True
             )
              # Compute loss
-            loss, kl_loss, ce_loss = self.distillation_loss(
+            loss, kl_loss, ce_loss = distillation_loss(
                 student_logits=student_logits,
                 teacher_logits=teacher_logits,
                 labels=labels,
@@ -254,12 +254,24 @@ class DistillationTrainer:
                         self.logger.info(f"Entered Validation Step: {self.global_step}")
                         val_metrics = self.validate()
                         
+                        evaluations_teacher = evaluate(
+                            model=self.teacher,
+                            eval_loader = self.val_loader,
+                            device=self.device   )
+                        
+                        evaluations_student = evaluate(
+                            model=self.student,
+                            eval_loader = self.val_loader,
+                            device=self.device   )
+                        
                         if self.logger:
                             self.logger.log_validation(
                                 step=self.global_step,
                                 val_loss=val_metrics['val_loss'],
                                 val_kl_loss=val_metrics['val_kl_loss'],
-                                val_ce_loss=val_metrics['val_ce_loss']
+                                val_ce_loss=val_metrics['val_ce_loss'],
+                                teacher_metrics = evaluations_teacher,
+                                student_metrics = evaluations_student
                             )
                         
                         # Save checkpoint
