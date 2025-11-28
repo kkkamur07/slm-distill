@@ -59,8 +59,10 @@ class StudentModel(nn.Module):
         return_logits=True
     ):
         input_ids = input_ids.to(self.device)
+        
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
+            
         if labels is not None:
             labels = labels.to(self.device)
         

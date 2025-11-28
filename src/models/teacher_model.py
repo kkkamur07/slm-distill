@@ -35,3 +35,6 @@ class TeacherModel(nn.Module):
     
     def get_num_parameters(self):
         return sum(p.numel() for p in self.parameters())
+    
+    def get_num_trainable_parameters(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)

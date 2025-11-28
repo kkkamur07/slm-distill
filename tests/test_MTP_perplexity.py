@@ -7,7 +7,7 @@ from src.evals.MTP_perplexity_eval import (
     compute_masked_token_perplexity,
 )
 
-from src.data.dataset import prepare_datasets
+from src.data.nativeSLM import prepare_datasets
 
 
 def main():

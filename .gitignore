@@ -9,7 +9,6 @@ wheels/
 # Virtual environments
 .venv/
 
-data/
 outputs/
 *.log
 train.log

@@ -9,7 +9,7 @@ from transformers import DataCollatorForLanguageModeling
 
 from src.models.teacher_model import TeacherModel
 from src.models.student_model import StudentModel
-from src.data.dataset import NativeSLMData
+from src.data.nativeSLM import NativeSLMData
 from src.training.trainer import DistillationTrainer
 from src.training.logging import TrainingLogger
 from torch.utils.data import DataLoader
@@ -44,7 +44,7 @@ def main(cfg: DictConfig):
     teacher = TeacherModel(model_path=cfg.paths.teacher_model_path, device=device)
     tokenizer = AutoTokenizer.from_pretrained(cfg.paths.teacher_model_path, use_fast = True)
     
-    logger.info(f"Teacher model loaded from {cfg.paths.teacher_model_path} with {teacher.get_num_parameters():,} parameters")
+    logger.info(f"Teacher model loaded from {cfg.paths.teacher_model_path} with {teacher.get_num_parameters():,} parameters of which {teacher.get_num_trainable_parameters():,} are trainable")
     
     # Create student model
     student = StudentModel(
@@ -63,12 +63,14 @@ def main(cfg: DictConfig):
     )
     
     logger.info(f"Student model created with parameters:{student.get_num_parameters():,} total, {student.get_trainable_parameters():,} trainable")
+
+    student = torch.compile(student)
     
     # Load the datasets
     logger.info("Loading datasets...")
     
-    train_dataset = NativeSLMData(cfg.data.dataset_path, train_split=cfg.data.train_split, tokenizer=tokenizer, split="train")
-    val_dataset = NativeSLMData(cfg.data.dataset_path, train_split=(1 - cfg.data.train_split), tokenizer=tokenizer, split="val")
+    train_dataset = NativeSLMData(cfg.data.dataset_path, train_split=cfg.data.train_split, tokenizer=tokenizer, split="train", cache_dir=cfg.paths.cache_dir)
+    val_dataset = NativeSLMData(cfg.data.dataset_path, train_split=(1 - cfg.data.train_split), tokenizer=tokenizer, split="val", cache_dir=cfg.paths.cache_dir)
 
     # Creating samplers, collators and data loaders
     logger.info("Creating Datacollators & loaders")
