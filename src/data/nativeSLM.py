@@ -31,6 +31,7 @@ class NativeSLMData(TorchDataset):
                 self.dataset = load_from_disk(cache_path).with_format("torch")
                 return
         
+        # Need to load it in chunks to avoid memory issues for the files.
         df = pd.read_parquet(data_path)
         dataset = Dataset.from_pandas(df) # Problem is here.
         
