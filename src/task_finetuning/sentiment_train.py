@@ -1,9 +1,36 @@
 from typing import List, Optional, Dict, Any
+
 import torch
 from torch import nn
 from torch.optim import AdamW
 from tqdm import tqdm
+from transformers import AutoConfig, XLMRobertaForSequenceClassification
+
 from src.evals.sentiment_eval import compute_sentiment_accuracy
+
+
+def create_sentiment_classifier(
+    base_model_name: str,
+    num_labels: int,
+    dropout: float,
+    subfolder: str | None = None,
+) -> nn.Module:
+    """Create an XLM-RoBERTa classifier with custom dropout and label count."""
+    cfg_kwargs: Dict[str, Any] = {}
+    if subfolder is not None:
+        cfg_kwargs["subfolder"] = subfolder
+
+    config = AutoConfig.from_pretrained(base_model_name, **cfg_kwargs)
+    config.num_labels = num_labels
+    config.hidden_dropout_prob = dropout
+    config.attention_probs_dropout_prob = dropout
+
+    model = XLMRobertaForSequenceClassification.from_pretrained(
+        base_model_name,
+        config=config,
+        **cfg_kwargs,
+    )
+    return model
 
 
 def train_sentiment_model(
@@ -14,26 +41,21 @@ def train_sentiment_model(
     dev_texts: Optional[List[str]],
     dev_labels: Optional[List[int]],
     device: str,
-    num_epochs: int = 3,
-    batch_size: int = 16,
-    learning_rate: float = 2e-5,
-    max_length: int = 128,
+    num_epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    max_length: int,
+    weight_decay: float,
+    early_stopping_patience: Optional[int],
+    min_delta: float,
     eval_on_dev: bool = True,
-    weight_decay: float = 0.01,
-    early_stopping_patience: Optional[int] = None,
-    min_delta: float = 0.0,
 ) -> Dict[str, Any]:
-    """
-    Fine-tune a sentiment classifier with optional weight decay + early stopping.
+    """Train a sentiment classifier with optional dev-based early stopping.
 
-    Returns:
-      {
-        "model": trained model (restored to best dev checkpoint if early stopping),
-        "history": [
-          {"epoch": int, "train_loss": float, "dev_metrics": dict | None},
-          ...
-        ],
-      }
+    Returns a dict with:
+      - "model": the model with best weights (if dev used) or last epoch
+      - "history": per-epoch loss and dev metrics
+      - "batch_history": per-batch training loss (for later visualisation)
     """
     model.to(device)
     optimizer = AdamW(
@@ -44,12 +66,16 @@ def train_sentiment_model(
 
     n_train = len(train_texts)
     history: List[Dict[str, Any]] = []
+    batch_history: List[Dict[str, Any]] = []
+    global_step = 0
 
     print(f"\n[Sentiment] Starting training on {n_train} examples...")
 
     best_dev_acc: Optional[float] = None
     best_state_dict: Optional[Dict[str, torch.Tensor]] = None
     no_improve = 0
+
+    has_dev = eval_on_dev and dev_texts is not None and dev_labels is not None
 
     for epoch in range(1, num_epochs + 1):
         model.train()
@@ -63,8 +89,6 @@ def train_sentiment_model(
             desc=f"[Sentiment] Epoch {epoch}/{num_epochs}",
         ):
             batch_indices = idxs[start : start + batch_size]
-            if not batch_indices:
-                continue
 
             batch_texts = [train_texts[i] for i in batch_indices]
             batch_y = [train_labels[i] for i in batch_indices]
@@ -86,14 +110,23 @@ def train_sentiment_model(
             optimizer.step()
             optimizer.zero_grad()
 
-            epoch_loss += loss.item()
+            loss_val = float(loss.item())
+            epoch_loss += loss_val
             num_batches += 1
+            global_step += 1
+
+            batch_history.append(
+                {
+                    "step": global_step,
+                    "epoch": epoch,
+                    "batch_loss": loss_val,
+                }
+            )
 
         avg_loss = epoch_loss / max(num_batches, 1)
-        print(f"\n[Sentiment] Epoch {epoch}: train loss = {avg_loss:.4f}")
+        dev_metrics: Optional[Dict[str, Any]] = None
 
-        dev_metrics = None
-        if eval_on_dev and dev_texts is not None and dev_labels is not None:
+        if has_dev:
             dev_metrics = compute_sentiment_accuracy(
                 model,
                 tokenizer,
@@ -131,7 +164,8 @@ def train_sentiment_model(
         )
 
         if (
-            early_stopping_patience is not None
+            has_dev
+            and early_stopping_patience is not None
             and best_dev_acc is not None
             and no_improve >= early_stopping_patience
         ):
@@ -144,5 +178,8 @@ def train_sentiment_model(
     if best_state_dict is not None:
         model.load_state_dict({k: v.to(device) for k, v in best_state_dict.items()})
 
-    return {"model": model, "history": history}
-
+    return {
+        "model": model,
+        "history": history,
+        "batch_history": batch_history,
+    }
