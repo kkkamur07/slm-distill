@@ -20,17 +20,18 @@ We are currently getting `perplexity` of around 18 on hindi and XLM Roberta base
 We have currently trained it on 100M tokens of hindi
 
 ### Future improvements : 
-- [ ] Robust Evaluations pipeline
+- [X] Robust Evaluations pipeline
 - [ ] Redue the vocabulary of tokenizer from 250004 to only hindi words
-- [ ] Add FlashAttention, ROPE so that you can have more fine grained control of the student's architecture
+- [X] Add FlashAttention, ROPE so that you can have more fine grained control of the student's architecture
 - [ ] Adaptive temperature and alpha scaling with some regularization in the loss so that model can generalize well. 
 - [ ] Varied & Diverse data and increase data
 - [ ] Cache the tokens because it takes a lot of time 
 - [ ] Teacher model should be studied in detail
-- [ ] More control over the hyperparameters
+- [X] More control over the hyperparameters
 - [ ] CUDA Kernel to accelerate training
-- [ ] Future research directions on data bias inheritance from teacher model and how to mitigate this ? 
-- [ ] Add robust logging to MLFlow and others
+- [X] Future research directions on data bias inheritance from teacher model and how to mitigate this ? 
+- [X] Add robust logging to MLFlow and others
+- [ ] Fisher Divergence instead of cross entropy
 
 ## 🎯 End Goal
 

@@ -1,7 +1,7 @@
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer, AutoConfig
 from src.evals.MTP_perplexity_eval import compute_masked_token_accuracy, compare_student_teacher_masked_token_agreement
-from src.data.data import prepare_datasets
+from src.data.dataset import prepare_datasets
 
 def main():
     print("="*60)
