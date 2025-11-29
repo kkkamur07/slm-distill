@@ -1,41 +1,7 @@
 from typing import List, Dict
 import torch
 from tqdm import tqdm
-from transformers import AutoConfig, XLMRobertaForTokenClassification
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-
-
-def create_ner_tagger(
-    base_model_name: str,
-    num_labels: int,
-    label2id: Dict[str, int],
-    id2label: Dict[int, str],
-    dropout: float = 0.1,
-    subfolder: str | None = None,
-):
-    """
-    Create an XLM-RoBERTa-based NER tagger.
-    """
-    cfg_kwargs = {}
-    if subfolder is not None:
-        cfg_kwargs["subfolder"] = subfolder
-
-    config = AutoConfig.from_pretrained(base_model_name, **cfg_kwargs)
-    config.num_labels = num_labels
-    config.label2id = label2id
-    config.id2label = id2label
-
-    if hasattr(config, "hidden_dropout_prob"):
-        config.hidden_dropout_prob = dropout
-    if hasattr(config, "classifier_dropout"):
-        config.classifier_dropout = dropout
-
-    model = XLMRobertaForTokenClassification.from_pretrained(
-        base_model_name,
-        config=config,
-        **cfg_kwargs,
-    )
-    return model
 
 
 @torch.no_grad()
@@ -45,8 +11,8 @@ def compute_ner_accuracy(
     sentences: List[List[str]],
     labels: List[List[int]],
     device: str,
-    batch_size: int = 32,
-    max_length: int = 128,
+    batch_size: int,
+    max_length: int,
     ignore_index: int = -100,
 ):
     """

@@ -1,27 +1,26 @@
 import torch
 from transformers import AutoTokenizer
 
-from src.evals.NER_eval import create_ner_tagger, compute_ner_accuracy
+from src.evals.ner_eval import compute_ner_accuracy
 from src.task_finetuning.ner_data import load_wikiann_split
-from src.task_finetuning.ner_train import train_ner_model
+from src.task_finetuning.ner_train import create_ner_tagger, train_ner_model
 
 
 def run_ner(
+    num_epochs: int,
+    batch_size: int,
+    max_length: int,
+    device: str | None,
+    weight_decay: float,
+    early_stopping_patience: int | None,
+    lr_grid: list[float] | None,
+    min_delta: float = 1e-5, ## early stopping
     train_path: str = "data/hin/train-00000-of-00001.parquet",
     dev_path: str = "data/hin/validation-00000-of-00001.parquet",
     test_path: str = "data/hin/test-00000-of-00001.parquet",
     teacher_model_name: str = "FacebookAI/xlm-roberta-base",
     student_model_name: str = "kkkamur07/hindi-xlm-roberta-33M",
     student_subfolder: str | None = "model",  # None if not needed
-    num_epochs: int = 3,
-    batch_size: int = 16,
-    learning_rate: float = 2e-5,  # kept for backward compatibility
-    max_length: int = 128,
-    device: str | None = None,
-    weight_decay: float = 0.01,
-    early_stopping_patience: int | None = 2,
-    min_delta: float = 0.0,
-    lr_grid: list[float] | None = None,
 ):
     """
     Fine-tune teacher and student on WikiANN Hindi NER and evaluate on test.
@@ -43,8 +42,7 @@ def run_ner(
 
     # LR grid default, similar to NLI and sentiment
     if lr_grid is None:
-        lr_grid = [2e-5, 5e-5, 1e-4]
-
+        raise ValueError("lr grid for NER not provided")
     tokenizer = AutoTokenizer.from_pretrained(teacher_model_name, use_fast=True)
 
     # Load dataset splits
@@ -67,6 +65,7 @@ def run_ner(
         best_acc = -1.0
         best_model = None
         best_lr = None
+        best_history = None
 
         for lr in lr_grid:
             print(f"\n[NER] Fine-tuning '{base_model_name}' with lr={lr:.1e}...")
@@ -75,7 +74,7 @@ def run_ner(
                 num_labels=num_labels,
                 label2id=label2id,
                 id2label=id2label,
-                dropout=0.1,  # fixed dropout as requested
+                dropout=0.1,
                 subfolder=subfolder,
             ).to(device)
 
@@ -98,7 +97,8 @@ def run_ner(
                 min_delta=min_delta,
             )
             model = res["model"]
-            last_dev = res["history"][-1]["dev_metrics"]
+            history = res["history"]
+            last_dev = history[-1]["dev_metrics"]
             dev_acc = last_dev["accuracy"] if last_dev is not None else 0.0
             print(f"[NER] {base_model_name}, lr={lr:.1e} dev acc={dev_acc:.4f}")
 
@@ -106,6 +106,7 @@ def run_ner(
                 best_acc = dev_acc
                 best_model = model
                 best_lr = lr
+                best_history = history
 
         if best_model is None:
             raise RuntimeError(f"[NER] Grid search failed for {base_model_name}")
@@ -114,16 +115,16 @@ def run_ner(
             f"[NER] Best lr for {base_model_name}: {best_lr:.1e} "
             f"(dev acc={best_acc:.4f})"
         )
-        return best_model, best_lr
+        return best_model, best_lr, best_history
 
     # Teacher grid search
-    teacher, best_lr_teacher = grid_search_model(
+    teacher, best_lr_teacher, teacher_history = grid_search_model(
         base_model_name=teacher_model_name,
         subfolder=None,
     )
 
     # Student grid search
-    student, best_lr_student = grid_search_model(
+    student, best_lr_student, student_history = grid_search_model(
         base_model_name=student_model_name,
         subfolder=student_subfolder,
     )
@@ -154,10 +155,14 @@ def run_ner(
     print("[NER] STUDENT metrics:", student_metrics)
 
     return {
-        "teacher": {"metrics": teacher_metrics, "best_lr": best_lr_teacher},
-        "student": {"metrics": student_metrics, "best_lr": best_lr_student},
+        "teacher": {
+            "metrics": teacher_metrics,
+            "best_lr": best_lr_teacher,
+            "history": teacher_history,
+        },
+        "student": {
+            "metrics": student_metrics,
+            "best_lr": best_lr_student,
+            "history": student_history,
+        },
     }
-
-
-if __name__ == "__main__":
-    run_ner()
