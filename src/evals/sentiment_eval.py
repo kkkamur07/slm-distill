@@ -10,8 +10,8 @@ def compute_sentiment_accuracy(
     texts,
     labels,
     device: str,
-    batch_size: int = 32,
-    max_length: int = 128,
+    batch_size: int,
+    max_length: int,
 ):
     model.to(device)
     model.eval()

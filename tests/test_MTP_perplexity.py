@@ -1,7 +1,7 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
-from src.evals.MTP_perplexity_eval import (
+from src.evals.mtp_perplexity_eval import (
     compute_masked_token_accuracy,
     compare_student_teacher_masked_token_agreement,
     compute_masked_token_perplexity,

@@ -122,11 +122,14 @@ def compute_masked_token_perplexity(model, tokenizer, eval_loader, device):
                 attention_mask = (input_ids != pad).long()
             else:
                 attention_mask = torch.ones_like(input_ids)
+
         attention_mask = attention_mask.to(device)
 
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits  # (B, L, V)
 
+        # einops - check that out. 
+        # logits.view(-1) - logits.rearrange('B L -> L B')
         loss = loss_fct(
             logits.view(-1, logits.size(-1)),
             labels.view(-1),

@@ -1,7 +1,7 @@
 import torch
 import pandas as pd
 from transformers import AutoTokenizer
-from src.evals.NER_eval import create_ner_tagger, compute_ner_accuracy
+from src.evals.ner_eval import create_ner_tagger, compute_ner_accuracy
 
 
 def load_wikiann_hi_test(path: str = "data/hin/test-00000-of-00001.parquet"):
