@@ -2,8 +2,8 @@ import torch
 from transformers import AutoTokenizer
 
 from src.evals.nli_eval import compute_nli_accuracy
-from src.task_finetuning.nli_data import load_nli_split
-from src.task_finetuning.nli_train import create_nli_classifier, train_nli_model
+from src.evals.task_finetuning.nli_data import load_nli_split
+from src.evals.task_finetuning.nli_train import create_nli_classifier, train_nli_model
 
 
 def run_nli(

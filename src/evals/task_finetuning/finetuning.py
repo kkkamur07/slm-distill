@@ -4,9 +4,9 @@ from pathlib import Path
 
 import torch
 
-from src.task_finetuning.sentiment_run import run_sentiment
-from src.task_finetuning.nli_run import run_nli
-from src.task_finetuning.ner_run import run_ner
+from src.evals.task_finetuning.sentiment_run import run_sentiment
+from src.evals.task_finetuning.nli_run import run_nli
+from src.evals.task_finetuning.ner_run import run_ner
 
 
 def main():

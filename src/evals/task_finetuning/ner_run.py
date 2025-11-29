@@ -2,8 +2,8 @@ import torch
 from transformers import AutoTokenizer
 
 from src.evals.ner_eval import compute_ner_accuracy
-from src.task_finetuning.ner_data import load_wikiann_split
-from src.task_finetuning.ner_train import create_ner_tagger, train_ner_model
+from src.evals.task_finetuning.ner_data import load_wikiann_split
+from src.evals.task_finetuning.ner_train import create_ner_tagger, train_ner_model
 
 
 def run_ner(
