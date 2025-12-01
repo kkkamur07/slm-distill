@@ -88,6 +88,8 @@ def train_sentiment_model(
             range(0, n_train, batch_size),
             desc=f"[Sentiment] Epoch {epoch}/{num_epochs}",
         ):
+            optimizer.zero_grad()
+
             batch_indices = idxs[start : start + batch_size]
 
             batch_texts = [train_texts[i] for i in batch_indices]
@@ -108,7 +110,6 @@ def train_sentiment_model(
 
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
 
             loss_val = float(loss.item())
             epoch_loss += loss_val

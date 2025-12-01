@@ -1,7 +1,7 @@
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer, AutoConfig
-from src.evals.MTP_perplexity_eval import compute_masked_token_accuracy, compare_student_teacher_masked_token_agreement
-from src.data.nativeSLM import prepare_datasets
+from src.evals.mtp_perplexity_eval import compute_masked_token_accuracy, compare_student_teacher_masked_token_agreement
+from src.data.nativeSLM import NativeSLMData
 
 def main():
     print("="*60)
@@ -25,7 +25,7 @@ def main():
     ).to(device)
     
     assert student.get_input_embeddings().num_embeddings == len(tokenizer)      
-    # Load and prepare datasets
+    #! Updated the way to load the datasets
     print("\n[2] Loading and preparing dataset...")
     train_loader, eval_loader = prepare_datasets(
         data_path='data/hin/data-99.parquet',

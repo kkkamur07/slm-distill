@@ -1,57 +1,6 @@
 import torch
 from tqdm import tqdm
-from transformers import AutoConfig, XLMRobertaForSequenceClassification
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-
-
-def create_nli_classifier(
-    base_model_name: str,
-    num_labels: int,
-    dropout: float | None = None,
-    subfolder: str | None = None,
-    **model_kwargs,
-):
-    """
-    Args:
-        base_model_name: HF model id or local path.
-        num_labels: number of NLI labels.
-        dropout: optional dropout rate for the classification head & encoder.
-        subfolder: if weights/config live in a HF subfolder (e.g. "model").
-        **model_kwargs: forwarded to .from_pretrained (e.g. token=...).
-
-    Returns:
-        XLMRobertaForSequenceClassification instance.
-    """
-    # Only pass subfolder if it's not None
-    config_kwargs = dict(model_kwargs)
-    if subfolder is not None:
-        config_kwargs["subfolder"] = subfolder
-
-    config = AutoConfig.from_pretrained(
-        base_model_name,
-        **config_kwargs,
-    )
-
-    config.num_labels = num_labels
-
-    if dropout is not None:
-        config.hidden_dropout_prob = dropout
-        config.attention_probs_dropout_prob = dropout
-        if hasattr(config, "classifier_dropout"):
-            config.classifier_dropout = dropout
-
-    model_kwargs2 = dict(model_kwargs)
-    if subfolder is not None:
-        model_kwargs2["subfolder"] = subfolder
-
-    model = XLMRobertaForSequenceClassification.from_pretrained(
-        base_model_name,
-        config=config,
-        ignore_mismatched_sizes=True,
-        **model_kwargs2,
-    )
-
-    return model
 
 
 @torch.no_grad()
@@ -62,8 +11,8 @@ def compute_nli_accuracy(
     hypotheses,
     labels,
     device,
-    batch_size: int = 32,
-    max_length: int = 128,
+    batch_size: int,
+    max_length: int,
 ):
     """
     Args:

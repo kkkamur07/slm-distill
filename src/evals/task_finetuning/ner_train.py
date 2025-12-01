@@ -3,7 +3,41 @@ import torch
 from torch import nn
 from torch.optim import AdamW
 from tqdm import tqdm
-from src.evals.NER_eval import compute_ner_accuracy
+from transformers import AutoConfig, XLMRobertaForTokenClassification
+from src.evals.ner_eval import compute_ner_accuracy
+
+
+def create_ner_tagger(
+    base_model_name: str,
+    num_labels: int,
+    label2id: Dict[str, int],
+    id2label: Dict[int, str],
+    dropout: float = 0.1,
+    subfolder: str | None = None,
+):
+    """
+    Create an XLM-RoBERTa-based NER tagger.
+    """
+    cfg_kwargs = {}
+    if subfolder is not None:
+        cfg_kwargs["subfolder"] = subfolder
+
+    config = AutoConfig.from_pretrained(base_model_name, **cfg_kwargs)
+    config.num_labels = num_labels
+    config.label2id = label2id
+    config.id2label = id2label
+
+    if hasattr(config, "hidden_dropout_prob"):
+        config.hidden_dropout_prob = dropout
+    if hasattr(config, "classifier_dropout"):
+        config.classifier_dropout = dropout
+
+    model = XLMRobertaForTokenClassification.from_pretrained(
+        base_model_name,
+        config=config,
+        **cfg_kwargs,
+    )
+    return model
 
 
 def train_ner_model(
@@ -14,15 +48,15 @@ def train_ner_model(
     dev_sentences: Optional[List[List[str]]],
     dev_labels: Optional[List[List[int]]],
     device: str,
-    num_epochs: int = 3,
-    batch_size: int = 16,
-    learning_rate: float = 2e-5,
-    max_length: int = 128,
+    num_epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    max_length: int,
+    weight_decay: float,
+    min_delta: float,
+    early_stopping_patience: Optional[int],
     ignore_index: int = -100,
     eval_on_dev: bool = True,
-    weight_decay: float = 0.01,
-    early_stopping_patience: Optional[int] = None,
-    min_delta: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Train NER model with optional weight decay and early stopping.
