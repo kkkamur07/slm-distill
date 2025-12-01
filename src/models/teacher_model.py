@@ -19,7 +19,7 @@ class TeacherModel(nn.Module):
         
         self.model.eval()
     
-    def forward(self, input_ids, attention_mask=None, return_logits=True):
+    def forward(self, input_ids, attention_mask=None, return_logits=True, labels=None):
         
         with torch.no_grad():
             outputs = self.model(

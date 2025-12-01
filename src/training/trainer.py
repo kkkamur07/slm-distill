@@ -169,7 +169,7 @@ class DistillationTrainer:
                 )
             
                 # Compute loss
-                loss, kl_loss, ce_loss = self.distillation_loss(
+                loss, kl_loss, ce_loss = distillation_loss(
                     student_logits=student_logits,
                     teacher_logits=teacher_logits,
                     labels=labels,
