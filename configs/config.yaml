@@ -1,45 +1,77 @@
-# Simple Configuration
-
+# Names
 names:
-  model_name : "indic-bert-distillation"
-  data_name : "hin-cleaned"
-  training_name : "distillation-v1"
+  experiment_name: "XLM_MLM_distillation_hindi"
+  model_name: "student_XLM"
 
-# Models
+# Teacher Model
 teacher:
-  name: "FacebookAI/xlm-roberta-base"
+  model_path: "xlm-roberta-base"
 
-student:
-  layers: 4
+# Student Model
+model:
+  vocab_size: 250002
   hidden_size: 128
-  embedding_size: 64
-  heads: 4
-  intermediate: 512
+  num_hidden_layers: 4
+  num_attention_heads: 4
+  intermediate_size: 512
+  max_sequence_length: 256
+  hidden_dropout_prob: 0.1
+  attention_probs_dropout_prob: 0.1
 
 # Data
 data:
-  data_path: "data/hin/cleaned_data.parquet"
-  train_split: 0.95  # 95% train, 5% eval
-  max_length: 256
+  dataset_path: "/home/krrish/Desktop/Programming/slm-distill/dataset/hin/train"
+  val_dataset_path: ""
+  train_split: 0.995
+  num_workers: 16
+  pin_memory: true
+  prefetch_factor: 8
+  persistent_workers: true
+  shuffle: true
+  drop_last: true
+
 
 # Training
 training:
   temperature: 2.5
   alpha: 0.65
   learning_rate: 3e-4
-  batch_size: 12
-  grad_accum: 4 # Effective batch size 64
-  num_epochs: 4
-  weight_decay: 0.01
-  warmup_ratio: 0.1
+  warmup_steps: 2000
+  total_steps: 100000
+  batch_size: 18
+  grad_accum_steps: 4
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  mixed_precision: true
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  log_every: 100
+  val_every: 1000
+  save_every: 1000
+  keep_last_k: 2
+  mlm_probability: 0.15
+  epochs: 3
 
 # Hardware
 hardware:
   device: "cuda"
-  mixed_precision: true
-  num_workers: 4
 
 # Paths
 paths:
-  output_dir: "./outputs"
-  save_every: 1000
+  checkpoint_dir: "outputs/checkpoints/${names.experiment_name}"
+  log_dir: "outputs/logs"
+  output_dir: "outputs/${names.experiment_name}"
+  teacher_model_path: "${teacher.model_path}"
+  dataset_path: "${data.dataset_path}"
+  cache_dir: "dataset/cache"
+
+# Seed
+seed: 42
+
+# Hydra settings
+hydra:
+  run:
+    dir: outputs/${names.experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: multirun/${names.experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}

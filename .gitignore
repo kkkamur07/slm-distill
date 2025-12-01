@@ -9,11 +9,11 @@ wheels/
 # Virtual environments
 .venv/
 
-data/
 outputs/
 *.log
 train.log
 logs/
 *cache/
 .pytest_cache/
-
+dataset/
+.DS_Store

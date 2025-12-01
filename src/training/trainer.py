@@ -1,212 +1,323 @@
-"""Training loop and optimization"""
-
 import torch
-import os
-import shutil
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Optional, Dict, Any
+from pathlib import Path
+from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
-from typing import Optional, Callable
 
+from .logging import TrainingLogger
+from .checkpointing import CheckpointManager
+from .accumulator import AmpGrad
+from .scheduler import WarmCosineLR
+from .loss import distillation_loss
+from ..evals.evals import evaluate
 
 class DistillationTrainer:
-    """Handles the training loop for knowledge distillation"""
     
     def __init__(
         self,
         student,
         teacher,
         train_loader,
+        val_loader,
         optimizer,
-        scheduler,
-        cfg,
-        scaler: Optional[torch.cuda.amp.GradScaler] = None
+        cfg: DictConfig, 
+        device: torch.device,
+        logger: Optional[TrainingLogger] = None,
     ):
-        self.student = student
-        self.teacher = teacher
+        self.student = student.to(device)
+        self.teacher = teacher.to(device)
+        
+        if hasattr(self.student, "device"):
+            self.student.device = device
+        if hasattr(self.teacher, "device"):
+            self.teacher.device = device
+        
         self.train_loader = train_loader
+        self.val_loader = val_loader
         self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.cfg = cfg
-        self.scaler = scaler
+        self.cfg = cfg  # Store full config
+        self.device = device
+        self.logger = logger
         
-        self.global_step = 0
-        self.best_loss = float('inf')
-        
-        os.makedirs(cfg.paths.output_dir, exist_ok=True)
-    
-    def train_epoch(
-        self, 
-        epoch: int, 
-        distillation_loss_fn: Callable,
-        eval_loader: Optional[torch.utils.data.DataLoader] = None
-    ):
-        """Train for one epoch"""
-        self.student.train()
         self.teacher.eval()
         
-        epoch_loss = 0
-        epoch_loss_kd = 0
-        epoch_loss_ce = 0
+        # Training components
+        self.amp_grad = AmpGrad(
+            optimizer=optimizer,
+            accum=cfg.training.grad_accum_steps,
+            amp=cfg.training.mixed_precision
+        )
         
-        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}")
+        self.scheduler = WarmCosineLR(
+            optimizer=optimizer,
+            warmup_steps=cfg.training.warmup_steps,
+            total_steps=cfg.training.total_steps,
+            base_lr=cfg.training.learning_rate
+        )
         
-        try:
-            for step, batch in enumerate(pbar):
-                # Move to device
-                input_ids = batch["input_ids"].to(self.cfg.hardware.device)
-                attention_mask = batch["attention_mask"].to(self.cfg.hardware.device)
-                labels = batch["labels"].to(self.cfg.hardware.device)
+        self.checkpoint_manager = CheckpointManager(
+            out_dir=cfg.paths.checkpoint_dir,
+            keep_last_k=cfg.training.keep_last_k,
+            logger=logger
+        )
+        
+        try : 
+            start_step, last_val_loss = self.checkpoint_manager.load_last(
+                model=self.student,
+                optimizer=self.optimizer,
+                scheduler=self.scheduler
+            )
+            
+            self.global_step = start_step
+            self.last_val_loss = last_val_loss
+        
+        except FileNotFoundError:
+            self.global_step = 0
+            self.last_val_loss = float('inf')
+        
+        # Hyperparameters
+        self.temperature = cfg.training.temperature
+        self.alpha = cfg.training.alpha
+        self.val_every = cfg.training.val_every
+        self.log_every = cfg.training.log_every
+        self.epochs = cfg.training.epochs
+        
+        if self.epochs is not None:
+            steps_per_epoch = len(self.train_loader) // cfg.training.grad_accum_steps
+            self.max_steps = steps_per_epoch * self.epochs
+        else:
+            self.max_steps = cfg.training.total_steps
+        
+        if self.logger:
+            self.logger.info("DistillationTrainer initialized")
+            self.logger.log_config(OmegaConf.to_container(cfg, resolve=True))
+            self.logger.log_model_info(teacher, "Teacher Model")
+            self.logger.log_model_info(student, "Student Model")
+    
+    def train_step(self, batch: Dict[str, torch.Tensor]):
+        
+        batch = {k: v.to(self.device) for k, v in batch.items()}
+
+        # Convert to long - important
+        input_ids = batch['input_ids'].long()
+        attention_mask = batch['attention_mask']
+        labels = batch['labels'].long()
+        
+        with torch.autocast(device_type=self.device.type, dtype = torch.float16, enabled=self.cfg.training.mixed_precision):
+            
+            with torch.no_grad():
+                teacher_logits = self.teacher(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    return_logits=True
+                )
                 
-                # Forward pass with mixed precision
-                with torch.cuda.amp.autocast(enabled=self.cfg.hardware.mixed_precision):
-                    # Teacher forward (no gradients)
-                    with torch.no_grad():
-                        teacher_logits = self.teacher(input_ids, attention_mask).logits
-                    
-                    # Student forward
-                    student_logits = self.student(input_ids, attention_mask).logits
-                    
-                    # Compute loss
-                    loss, loss_kd, loss_ce = distillation_loss_fn(
-                        student_logits, teacher_logits, labels,
-                        self.cfg.training.temperature, self.cfg.training.alpha
-                    )
-                    
-                    # Scale for gradient accumulation
-                    loss = loss / self.cfg.training.grad_accum
+             # Student forward
+            student_logits = self.student(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_logits=True
+            )
+             # Compute loss
+            loss, kl_loss, ce_loss = distillation_loss(
+                student_logits=student_logits,
+                teacher_logits=teacher_logits,
+                labels=labels,
+                temperature=self.temperature,
+                alpha=self.alpha
+            )   
+        
+        # Backward pass with gradient accumulation
+        self.amp_grad.backward(loss)
+        
+        return {
+            'loss': loss.item(),
+            'kl_loss': kl_loss,
+            'ce_loss': ce_loss
+        }
+    
+    @torch.no_grad()
+    def validate(self):
+
+        self.student.eval()
+        
+        total_loss = 0.0
+        total_kl_loss = 0.0
+        total_ce_loss = 0.0
+        num_batches = 0
+        
+        for batch in self.val_loader:
+            input_ids = batch['input_ids'].long().to(self.device)
+            attention_mask = batch['attention_mask'].to(self.device)
+            labels = batch['labels'].long().to(self.device)
+            
+            with torch.autocast(device_type=self.device.type, dtype = torch.float16, enabled=self.cfg.training.mixed_precision):
                 
-                # Backward pass
-                if self.cfg.hardware.mixed_precision:
-                    self.scaler.scale(loss).backward()
-                else:
-                    loss.backward()
+                # Forward pass
+                teacher_logits = self.teacher(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    return_logits=True
+                )
+            
+                student_logits = self.student(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    return_logits=True
+                )
+            
+                # Compute loss
+                loss, kl_loss, ce_loss = self.distillation_loss(
+                    student_logits=student_logits,
+                    teacher_logits=teacher_logits,
+                    labels=labels,
+                    temperature=self.temperature,
+                    alpha=self.alpha
+                )
                 
-                # Optimizer step (every grad_accum steps)
-                if (step + 1) % self.cfg.training.grad_accum == 0:
-                    if self.cfg.hardware.mixed_precision:
-                        self.scaler.unscale_(self.optimizer)
+            total_loss += loss.item()
+            total_kl_loss += kl_loss
+            total_ce_loss += ce_loss
+            num_batches += 1
+        
+        self.student.train()
+        
+        avg_loss = total_loss / num_batches
+        avg_kl_loss = total_kl_loss / num_batches
+        avg_ce_loss = total_ce_loss / num_batches
+        
+        return {
+            'val_loss': avg_loss,
+            'val_kl_loss': avg_kl_loss,
+            'val_ce_loss': avg_ce_loss
+        }
+    
+    def train(self):
+        if self.logger:
+            self.logger.info("=" * 60)
+            self.logger.info("Starting training...")
+            self.logger.info("=" * 60)
+        
+        self.student.train()
+        
+        running_loss = 0.0
+        running_kl_loss = 0.0
+        running_ce_loss = 0.0
+        
+        pbar = tqdm(
+            total=self.max_steps,
+            initial=self.global_step,
+            desc="Training",
+            unit="step",
+        )
+        
+        epoch = 0
+        while self.global_step < self.max_steps:
+            epoch += 1
+            
+            for batch in self.train_loader:
+                # Training step
+                metrics = self.train_step(batch)
+
+                accum_steps = self.cfg.training.grad_accum_steps
+                
+                running_loss += metrics['loss'] / accum_steps
+                running_kl_loss += metrics['kl_loss'] / accum_steps
+                running_ce_loss += metrics['ce_loss'] / accum_steps
+                             
+                # Optimizer step
+                if self.amp_grad.should_step():
+                    
+                    # Unscale gradients if using AMP
+                    self.amp_grad.unscale_()
                     
                     # Gradient clipping
                     torch.nn.utils.clip_grad_norm_(self.student.parameters(), 1.0)
                     
                     # Update weights
-                    if self.cfg.hardware.mixed_precision:
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
-                    else:
-                        self.optimizer.step()
+                    self.amp_grad.step()
+                    self.amp_grad.zero_grad()
                     
-                    self.scheduler.step()
-                    self.optimizer.zero_grad()
+                    # Update learning rate
+                    lr = self.scheduler.step()
+                    
                     self.global_step += 1
-                
-                # Track metrics
-                loss_value = loss.item() * self.cfg.training.grad_accum
-                epoch_loss += loss_value
-                epoch_loss_kd += loss_kd
-                epoch_loss_ce += loss_ce
-                
-                # Update progress bar
-                pbar.set_postfix({
-                    'loss': f'{loss_value:.4f}',
-                    'kd': f'{loss_kd:.4f}',
-                    'ce': f'{loss_ce:.4f}',
-                    'lr': f'{self.optimizer.param_groups[0]["lr"]:.2e}'
-                })
-                
-                # Save checkpoint periodically
-                if self.global_step % self.cfg.paths.save_every == 0 and \
-                   (step + 1) % self.cfg.training.grad_accum == 0:
-                    self.save_checkpoint(f"step_{self.global_step}")
                     
-        except RuntimeError as e:
-            if "out of memory" in str(e):
-                print(f"\n❌ OOM Error at step {step}")
-                print(f"Try: batch_size={self.cfg.training.batch_size//2} or grad_accum={self.cfg.training.grad_accum*2}")
-                torch.cuda.empty_cache()
-            raise
-        
-        # Calculate averages
-        num_batches = len(self.train_loader)
-        avg_loss = epoch_loss / num_batches
-        avg_loss_kd = epoch_loss_kd / num_batches
-        avg_loss_ce = epoch_loss_ce / num_batches
-        
-        # Evaluate if eval_loader provided
-        eval_loss = None
-        if eval_loader is not None:
-            eval_loss = self.evaluate(eval_loader, distillation_loss_fn)
-        
-        return {
-            'train_loss': avg_loss,
-            'train_loss_kd': avg_loss_kd,
-            'train_loss_ce': avg_loss_ce,
-            'eval_loss': eval_loss
-        }
-    
-    def evaluate(self, eval_loader, distillation_loss_fn):
-        """Evaluate on validation set"""
-        self.student.eval()
-        total_loss = 0
-        
-        with torch.no_grad():
-            for batch in tqdm(eval_loader, desc="Evaluating"):
-                input_ids = batch["input_ids"].to(self.cfg.hardware.device)
-                attention_mask = batch["attention_mask"].to(self.cfg.hardware.device)
-                labels = batch["labels"].to(self.cfg.hardware.device)
-                
-                with torch.cuda.amp.autocast(enabled=self.cfg.hardware.mixed_precision):
-                    teacher_logits = self.teacher(input_ids, attention_mask).logits
-                    student_logits = self.student(input_ids, attention_mask).logits
+                    pbar.update(1)
                     
-                    loss, _, _ = distillation_loss_fn(
-                        student_logits, teacher_logits, labels,
-                        self.cfg.training.temperature, self.cfg.training.alpha
-                    )
+                    # Logging
+                    if self.global_step % self.log_every == 0:
+                        avg_loss = running_loss / self.log_every
+                        avg_kl_loss = running_kl_loss / self.log_every
+                        avg_ce_loss = running_ce_loss / self.log_every
+                        
+                        if self.logger:
+                            self.logger.log_training_step(
+                                step=self.global_step,
+                                loss=avg_loss,
+                                lr=f"{lr:.8f}",
+                                kl_loss=avg_kl_loss,
+                                ce_loss=avg_ce_loss
+                            )
+                        
+                        running_loss = 0.0
+                        running_kl_loss = 0.0
+                        running_ce_loss = 0.0
                     
-                    total_loss += loss.item()
-        
-        return total_loss / len(eval_loader)
-    
-    def save_checkpoint(self, name: str):
-        """Save model checkpoint"""
-        checkpoint_path = os.path.join(self.cfg.paths.output_dir, name)
-        self.student.save_pretrained(checkpoint_path)
-        print(f"\n✓ Checkpoint saved: {checkpoint_path}")
-        
-        # Cleanup old checkpoints
-        self.cleanup_old_checkpoints()
-    
-    def cleanup_old_checkpoints(self, keep_last: int = 5):
-        """Keep only last N checkpoints"""
-        checkpoints = [
-            d for d in os.listdir(self.cfg.paths.output_dir)
-            if d.startswith("step_") and os.path.isdir(os.path.join(self.cfg.paths.output_dir, d))
-        ]
-        
-        if len(checkpoints) > keep_last:
-            # Sort by step number
-            checkpoints.sort(key=lambda x: int(x.split("_")[1]))
+                    if self.global_step % self.val_every == 0:
+                        self.logger.info(f"Entered Validation Step: {self.global_step}")
+                        val_metrics = self.validate()
+                        
+                        evaluations_teacher = evaluate(
+                            model=self.teacher,
+                            eval_loader = self.val_loader,
+                            device=self.device   )
+                        
+                        evaluations_student = evaluate(
+                            model=self.student,
+                            eval_loader = self.val_loader,
+                            device=self.device   )
+                        
+                        if self.logger:
+                            self.logger.log_validation(
+                                step=self.global_step,
+                                val_loss=val_metrics['val_loss'],
+                                val_kl_loss=val_metrics['val_kl_loss'],
+                                val_ce_loss=val_metrics['val_ce_loss'],
+                                teacher_metrics = evaluations_teacher,
+                                student_metrics = evaluations_student
+                            )
+                        
+                        # Save checkpoint
+                        self.checkpoint_manager.save(
+                            model=self.student,
+                            optimizer=self.optimizer,
+                            scheduler=self.scheduler,
+                            step=self.global_step,
+                            val_loss=val_metrics['val_loss'],
+                            config=self.cfg
+                        )
+                    
+                    # Stop if max steps reached
+                    if self.global_step >= self.max_steps:
+                        break
             
-            # Remove old checkpoints
-            for old_checkpoint in checkpoints[:-keep_last]:
-                old_path = os.path.join(self.cfg.paths.output_dir, old_checkpoint)
-                shutil.rmtree(old_path)
-                print(f"Removed old checkpoint: {old_checkpoint}")
-    
-    def save_best(self, loss: float, tokenizer):
-        """Save best model if loss improved"""
-        if loss < self.best_loss:
-            self.best_loss = loss
-            best_path = os.path.join(self.cfg.paths.output_dir, "best_model")
-            self.student.save_pretrained(best_path)
-            tokenizer.save_pretrained(best_path)
-            print(f"✓ Best model saved (loss: {loss:.4f})")
-            return True
-        return False
-    
-    def save_final(self, tokenizer):
-        """Save final model"""
-        final_path = os.path.join(self.cfg.paths.output_dir, "final_model")
-        self.student.save_pretrained(final_path)
-        tokenizer.save_pretrained(final_path)
-        print(f"✓ Final model saved: {final_path}")
+            if self.global_step >= self.max_steps:
+                break
+        
+        if self.logger:
+            self.logger.info("=" * 60)
+            self.logger.info("Training completed!")
+            self.logger.info(f"Total steps: {self.global_step}")
+            self.logger.info("=" * 60)
+        
+        # Load best model
+        if self.logger:
+            self.logger.info("Loading best model...")
+        
+        self.checkpoint_manager.load_best(self.student)
+        
+        if self.logger:
+            self.logger.info("Training finished! Best model loaded.")

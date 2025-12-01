@@ -12,18 +12,16 @@ def distillation_loss(
     temperature: float,
     alpha: float
 ) -> Tuple[torch.Tensor, float, float]:
-   
+    
     batch_size, seq_len, vocab_size = student_logits.shape
     student_flat = student_logits.view(-1, vocab_size)  # (batch*seq, vocab)
     teacher_flat = teacher_logits.view(-1, vocab_size)  # (batch*seq, vocab)
     labels_flat = labels.view(-1)  # (batch*seq,)
     
-    # Mask for valid tokens only (where label != -100)
     mask = labels_flat != -100  # (batch*seq,) boolean mask
     
-    # KD Loss - only compute on masked tokens
     if mask.sum() > 0:
-        # Select only masked positions
+        
         student_masked = student_flat[mask]  # (num_masked, vocab)
         teacher_masked = teacher_flat[mask]  # (num_masked, vocab)
         
@@ -37,8 +35,8 @@ def distillation_loss(
             soft_teacher,
             reduction='batchmean'
         ) * (temperature ** 2)
+        
     else:
-        # No masked tokens in this batch (shouldn't happen)
         loss_kd = torch.tensor(0.0, device=student_logits.device)
     
     # Loss C
@@ -53,3 +51,5 @@ def distillation_loss(
     total_loss = alpha * loss_kd + (1 - alpha) * loss_ce
     
     return total_loss, loss_kd.item(), loss_ce.item()
+
+
