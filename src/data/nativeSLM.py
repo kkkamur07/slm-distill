@@ -2,8 +2,10 @@
 
 import os
 import pandas as pd
-from datasets import Dataset, load_from_disk
+from datasets import Dataset, load_from_disk, concatenate_datasets
 from torch.utils.data import Dataset as TorchDataset
+from pathlib import Path
+import gc
 
 
 class NativeSLMData(TorchDataset):
@@ -31,27 +33,40 @@ class NativeSLMData(TorchDataset):
                 self.dataset = load_from_disk(cache_path).with_format("torch")
                 return
         
-        # Need to load it in chunks to avoid memory issues for the files.
-        df = pd.read_parquet(data_path)
-        dataset = Dataset.from_pandas(df) # Problem is here.
+        parquet_files = sorted(Path(data_path).glob("*.parquet"))
         
-        split_dataset = dataset.train_test_split(train_size=train_split, seed=seed)
-        dataset = split_dataset['train'] if train else split_dataset['test']
+        if not parquet_files:
+            raise ValueError(f"No parquet files found in {data_path}")
         
-        self.dataset = dataset.map(
+        all_dataset = []
+        
+        for i, file in enumerate(parquet_files):
+            print(f"Loading parquet file {i+1}/{len(parquet_files)}: {file}")
             
-            lambda x: tokenizer(
-                x["text"],
-                truncation=True,
-                max_length=max_length,
-                padding="max_length",
-                return_special_tokens_mask=True,
-            ),
-            batched=True,
-            batch_size=1024,
-            remove_columns=dataset.column_names,
+            df_chunk = pd.read_parquet(file)
+            ds_chunk = Dataset.from_pandas(df_chunk)
             
-        ).with_format("torch")
+            ds_chunk = ds_chunk.map(
+                lambda x : tokenizer(
+                    x["text"],
+                    truncation=True,
+                    max_length=max_length,
+                    padding="max_length",
+                    return_special_tokens_mask=True,
+                ),
+                batched=True,
+                batch_size=1024,
+                remove_columns=ds_chunk.column_names,
+            )
+            
+            all_dataset.append(ds_chunk)
+            
+            del df_chunk
+            gc.collect()
+            
+        combined_dataset = concatenate_datasets(all_dataset)
+        split_dataset = combined_dataset.train_test_split(train_size=train_split, seed=seed)
+        self.dataset = (split_dataset['train'] if train else split_dataset['test']).with_format("torch")
         
         # Save to cache
         if cache_path:

@@ -206,9 +206,18 @@ class DistillationTrainer:
         running_kl_loss = 0.0
         running_ce_loss = 0.0
         
+        pbar = tqdm(
+            total=self.max_steps,
+            initial=self.global_step,
+            desc="Training",
+            unit="step",
+        )
+        
+        epoch = 0
         while self.global_step < self.max_steps:
+            epoch += 1
             
-            for batch in tqdm(self.train_loader, desc=f"Epoch {(self.global_step // (len(self.train_loader) // self.cfg.training.grad_accum_steps)) + 1}"):
+            for batch in self.train_loader:
                 # Training step
                 metrics = self.train_step(batch)
 
@@ -235,6 +244,8 @@ class DistillationTrainer:
                     lr = self.scheduler.step()
                     
                     self.global_step += 1
+                    
+                    pbar.update(1)
                     
                     # Logging
                     if self.global_step % self.log_every == 0:
