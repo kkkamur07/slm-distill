@@ -2,8 +2,8 @@ import torch
 from transformers import AutoTokenizer
 
 from src.evals.sentiment_eval import compute_sentiment_accuracy
-from src.evals.task_finetuning.sentiment_data import load_sentiment_csv
-from src.evals.task_finetuning.sentiment_train import (
+from src.task_finetuning.sentiment_data import load_sentiment_csv
+from src.task_finetuning.sentiment_train import (
     create_sentiment_classifier,
     train_sentiment_model,
 )
