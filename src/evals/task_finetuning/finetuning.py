@@ -4,9 +4,9 @@ from pathlib import Path
 
 import torch
 
-from src.task_finetuning.sentiment_run import run_sentiment
-from src.task_finetuning.nli_run import run_nli
-from src.task_finetuning.ner_run import run_ner
+from src.evals.task_finetuning.sentiment_run import run_sentiment
+from src.evals.task_finetuning.nli_run import run_nli
+from src.evals.task_finetuning.ner_run import run_ner
 
 
 def main():
@@ -16,7 +16,7 @@ def main():
     sentiment_results = run_sentiment(
         num_labels=3,
         num_epochs=8,
-        batch_size=24,
+        batch_size=16,
         max_length=128,
         lr_grid=[3e-6, 1e-5, 3e-5, 1e-4, 3e-4],
         dropout=0.1,
@@ -27,7 +27,7 @@ def main():
 
     nli_results = run_nli(
         num_epochs = 8,
-        batch_size = 32,
+        batch_size = 16,
         max_length = 128,
         lr_grid=[3e-6, 1e-5, 3e-5, 1e-4, 3e-4],
         dropout=0.1,
@@ -38,7 +38,7 @@ def main():
 
     ner_results = run_ner(
         num_epochs=8,
-        batch_size=24,
+        batch_size=16,
         max_length=128,
         device=device,
         lr_grid=[3e-6, 1e-5, 3e-5, 1e-4, 3e-4],

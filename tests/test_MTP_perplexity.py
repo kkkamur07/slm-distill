@@ -26,7 +26,6 @@ def main():
         data_path="data/hin/data-99.parquet",
         max_length=128,
         batch_size=32,
-        train_split=0.001,
     )
 
     teacher = AutoModelForMaskedLM.from_pretrained(teacher_name).to(device)
