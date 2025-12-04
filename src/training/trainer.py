@@ -10,7 +10,7 @@ from .logging import TrainingLogger
 from .checkpointing import CheckpointManager
 from .accumulator import AmpGrad
 from .scheduler import WarmCosineLR
-from .loss import distillation_loss
+from .loss import distillation_loss, compute_score_matching_loss
 from ..evals.evals import evaluate
 
 class DistillationTrainer:
@@ -107,23 +107,27 @@ class DistillationTrainer:
         
         with torch.autocast(device_type=self.device.type, dtype = torch.float16, enabled=self.cfg.training.mixed_precision):
             
-            with torch.no_grad():
-                teacher_logits = self.teacher(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    return_logits=True
-                )
+            # with torch.no_grad():
+            #     teacher_embeddings = self.teacher.get_embeddings(input_ids)
+            #     teacher_logits = self.teacher(
+            #         input_ids=input_ids,
+            #         attention_mask=attention_mask,
+            #         return_logits=True
+            #     )
                 
-             # Student forward
-            student_logits = self.student(
+            #  # Student forward
+            # student_embeddings = self.student.get_embeddings(input_ids) 
+            # student_logits = self.student(
+            #     input_ids=input_ids,
+            #     attention_mask=attention_mask,
+            #     return_logits=True
+            # )
+             # Compute loss
+            loss, kl_loss, score_loss = compute_score_matching_loss(
+                student_model=self.student,
+                teacher_model=self.teacher,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                return_logits=True
-            )
-             # Compute loss
-            loss, kl_loss, ce_loss = distillation_loss(
-                student_logits=student_logits,
-                teacher_logits=teacher_logits,
                 labels=labels,
                 temperature=self.temperature,
                 alpha=self.alpha
@@ -135,7 +139,7 @@ class DistillationTrainer:
         return {
             'loss': loss.item(),
             'kl_loss': kl_loss,
-            'ce_loss': ce_loss
+            'ce_loss': score_loss
         }
     
     @torch.no_grad()
@@ -258,8 +262,8 @@ class DistillationTrainer:
                                 step=self.global_step,
                                 loss=avg_loss,
                                 lr=f"{lr:.8f}",
-                                kl_loss=avg_kl_loss,
-                                ce_loss=avg_ce_loss
+                                kl_loss=f"{avg_kl_loss:.6f}",
+                                ce_loss=f"{avg_ce_loss:.10f}"
                             )
                         
                         running_loss = 0.0

@@ -21,13 +21,10 @@ class StudentModel(nn.Module):
     ):
         super().__init__()
         
-        # Validate
-        assert hidden_size % num_attention_heads == 0, \
-            f"hidden_size ({hidden_size}) must be divisible by num_attention_heads ({num_attention_heads})"
+        assert hidden_size % num_attention_heads == 0
         
         self.device = device
         
-        # XLM-RoBERTa Config
         config = XLMRobertaConfig(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
@@ -47,32 +44,25 @@ class StudentModel(nn.Module):
         if use_gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
     
-    def forward(
-        self,
-        input_ids,
-        attention_mask=None,
-        labels=None,
-        return_logits=True
-    ):
-        input_ids = input_ids.to(self.device)
-        
+    def forward(self, input_ids=None, inputs_embeds=None, attention_mask=None, 
+                labels=None, return_logits=True):
+
+        if input_ids is not None:
+            input_ids = input_ids.to(self.device)
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
-            
         if labels is not None:
             labels = labels.to(self.device)
         
         outputs = self.model(
             input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             labels=labels,
-            output_hidden_states=False,
+            return_dict=True
         )
         
-        if return_logits:
-            return outputs.logits  # [batch_size, seq_len, vocab_size]
-        else:
-            return outputs
+        return outputs.logits if return_logits else outputs
     
     def get_num_parameters(self):
         return sum(p.numel() for p in self.parameters())
@@ -81,5 +71,4 @@ class StudentModel(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
     def get_config(self):
-        return self.config  
-    
+        return self.config
