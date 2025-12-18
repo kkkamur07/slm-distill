@@ -43,7 +43,7 @@ def save_checkpoint(
         "projection": projection.state_dict() if projection is not None else None,
     }
 
-    # Save last checkpoint
+    # Save last checkpoints
     torch.save(checkpoint, out / DEF_NAME)
     _log(logger, f"Saved checkpoint at step {step} to {out / DEF_NAME}")
 

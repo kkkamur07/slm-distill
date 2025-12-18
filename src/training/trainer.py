@@ -56,7 +56,8 @@ class DistillationTrainer:
             optimizer=optimizer,
             warmup_steps=cfg.training.warmup_steps,
             total_steps=cfg.training.total_steps,
-            base_lr=cfg.training.learning_rate
+            base_lr=cfg.training.learning_rate,
+            cycle_restart_steps=cfg.training.cycle_restart_steps,
         )
         
         self.checkpoint_manager = CheckpointManager(
@@ -75,6 +76,7 @@ class DistillationTrainer:
                 )
             
                 self.global_step = start_step
+                self.scheduler.total_steps = cfg.training.total_steps
                 self.last_val_loss = last_val_loss
                 
                 if self.logger :

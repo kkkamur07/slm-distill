@@ -52,6 +52,7 @@ training:
   mlm_probability: 0.15
   epochs: 2
   load_from_checkpoint: true
+  cycle_restart_steps: 20000
 
 # Hardware
 hardware:
