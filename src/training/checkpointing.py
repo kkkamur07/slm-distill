@@ -22,7 +22,8 @@ def save_checkpoint(
     val_loss: Optional[float] = None,
     config: dict | None = None,
     is_best: bool = False,
-    logger: Optional['TrainingLogger'] = None
+    logger: Optional['TrainingLogger'] = None, 
+    projection: Optional[nn.Module] = None
 ):
 
     out = Path(out_dir)
@@ -39,6 +40,7 @@ def save_checkpoint(
         "config": config,
         "val_loss": float(val_loss) if val_loss is not None else None,
         "version": "geneformer-distillation-v1",
+        "projection": projection.state_dict() if projection is not None else None,
     }
 
     # Save last checkpoint
@@ -57,7 +59,8 @@ def load_checkpoint(
     optimizer=None, 
     scheduler=None, 
     strict: bool = True,
-    logger: Optional['TrainingLogger'] = None
+    logger: Optional['TrainingLogger'] = None,
+    projection: Optional[nn.Module] = None
 ):
 
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
@@ -80,6 +83,9 @@ def load_checkpoint(
     
     if scheduler is not None and ckpt.get("scheduler") is not None:
         scheduler.load_state_dict(ckpt["scheduler"])
+        
+    if projection is not None and ckpt.get("projection") is not None:
+        projection.load_state_dict(ckpt["projection"])
 
     step = ckpt.get("step", 0)
     val_loss = ckpt.get("val_loss", float('inf'))
@@ -169,7 +175,8 @@ class CheckpointManager:
         scheduler, 
         step: int, 
         val_loss: Optional[float] = None,
-        config: dict = None
+        config: dict = None,
+        projection: Optional[nn.Module] = None,
     ):
         is_best = False
         if val_loss is not None and val_loss < self.best_val_loss:
@@ -186,6 +193,7 @@ class CheckpointManager:
             val_loss=val_loss,
             config=config,
             is_best=is_best,
+            projection=projection,
             logger=self.logger
         )
         
@@ -211,19 +219,19 @@ class CheckpointManager:
         except Exception as e:
             _log(self.logger, f"Warning: Could not cleanup checkpoints: {e}")
     
-    def load_best(self, model, optimizer=None, scheduler=None):
+    def load_best(self, model, optimizer=None, scheduler=None, projection=None):
 
         best_path = self.out_dir / BEST_NAME
         if not best_path.exists():
             raise FileNotFoundError(f"No best checkpoint found at {best_path}")
         
         _log(self.logger, f"Loading best checkpoint from {best_path}")
-        return load_checkpoint(model, str(best_path), optimizer, scheduler, logger=self.logger)
+        return load_checkpoint(model, str(best_path), optimizer, scheduler, logger=self.logger, projection=projection)
     
-    def load_last(self, model, optimizer=None, scheduler=None):
+    def load_last(self, model, optimizer=None, scheduler=None, projection=None):
         last_path = self.out_dir / DEF_NAME
         if not last_path.exists():
             raise FileNotFoundError(f"No checkpoint found at {last_path}")
         
         _log(self.logger, f"Loading last checkpoint from {last_path}")
-        return load_checkpoint(model, str(last_path), optimizer, scheduler, logger=self.logger)
+        return load_checkpoint(model, str(last_path), optimizer, scheduler, logger=self.logger, projection=projection)

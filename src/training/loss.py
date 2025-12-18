@@ -1,6 +1,6 @@
 """Distillation loss functions"""
-
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple
 
@@ -69,12 +69,11 @@ The intuition :
 This is score matching over the labels. 
 """
 
-import torch
-import torch.nn.functional as F
 
 def compute_score_matching_loss(
     teacher_model,
     student_model,
+    score_projection,
     input_ids,
     attention_mask,
     labels,
@@ -88,14 +87,16 @@ def compute_score_matching_loss(
         zero_loss = torch.tensor(0.0, device=device, requires_grad=True)
         return zero_loss, 0.0, 0.0
     
-    labels_clamped = labels.clamp(min=0)
+    valid_count = mask.float().sum()
     
-    # Disable efficient SDPA for score matching
     with torch.backends.cuda.sdp_kernel(
         enable_flash=False,
-        enable_math=True,  # Use standard math attention
+        enable_math=True,
         enable_mem_efficient=False
     ):
+        
+        # Compute teacher scores
+
         teacher_emb = teacher_model.model.get_input_embeddings()(input_ids.to(teacher_model.device))
         teacher_emb_grad = teacher_emb.detach().requires_grad_(True)
         
@@ -106,15 +107,20 @@ def compute_score_matching_loss(
         )
         teacher_logits = teacher_outputs.logits
         
-        teacher_log_probs = F.log_softmax(teacher_logits, dim=-1)
-        teacher_log_probs_labels = teacher_log_probs.gather(-1, labels_clamped.unsqueeze(-1)).squeeze(-1)
+         #! Should I use the logsoftmax here instead ? 
+        teacher_log_Z = torch.logsumexp(teacher_logits, dim=-1) 
+        teacher_objective = (teacher_log_Z * mask.float()).sum() / valid_count # Only calculate for the masked positions
         
         teacher_score = torch.autograd.grad(
-            outputs=teacher_log_probs_labels.mean(),
+            outputs=teacher_objective,
             inputs=teacher_emb_grad,
             retain_graph=False,
             create_graph=False
-        )[0].detach()
+        )[0].detach() 
+        
+        teacher_score_projected = score_projection(teacher_score.to(student_model.device)) 
+        
+        # Compute student scores
         
         student_emb = student_model.model.get_input_embeddings()(input_ids.to(student_model.device))
         student_emb_grad = student_emb.detach().requires_grad_(True)
@@ -126,37 +132,36 @@ def compute_score_matching_loss(
         )
         student_logits = student_outputs.logits
         
-        # Score matching
-        student_log_probs = F.log_softmax(student_logits, dim=-1)
-        student_log_probs_labels = student_log_probs.gather(-1, labels_clamped.unsqueeze(-1)).squeeze(-1)
-        
-        # print(f"Student log probs labels mean: {student_log_probs_labels.mean()}")
+        #! Should I use the logsoftmax here instead ? 
+        student_log_Z = torch.logsumexp(student_logits, dim=-1)
+        student_objective = (student_log_Z * mask.float().to(student_model.device)).sum() / valid_count
         
         student_score = torch.autograd.grad(
-            outputs=student_log_probs_labels.mean(),
+            outputs=student_objective,
             inputs=student_emb_grad,
             retain_graph=True,
-            create_graph=True
-        )[0]
-        
-        # print(f"Student score shape: {student_score.shape}, norm: {student_score.norm()}")
+            create_graph=True  
+        )[0] 
+   
     
-    teacher_score_mag = teacher_score.norm(dim=-1)  # [batch, seq]
-    student_score_mag = student_score.norm(dim=-1)  # [batch, seq]
+    mask_expanded = mask.unsqueeze(-1).float().to(student_model.device)
     
-    # Normalize by sqrt of embedding dimension
-    teacher_dim = teacher_score.shape[-1]  # 768
-    student_dim = student_score.shape[-1]  # 128
-
-    teacher_score_mag_norm = teacher_score_mag / (teacher_dim ** 0.5)
-    student_score_mag_norm = student_score_mag / (student_dim ** 0.5)
-
-    # MSE on magnitudes
-    mask_float = mask.float()
-    score_diff = ((teacher_score_mag_norm - student_score_mag_norm) ** 2) * mask_float
-    score_loss = score_diff.sum() / mask_float.sum().clamp(min=1)
+    # MSE Loss
+    score_diff = ((student_score - teacher_score_projected) ** 2) * mask_expanded.to(student_model.device)
+    score_loss = score_diff.sum() / (mask_expanded.sum() * student_score.shape[-1])
+    score_loss = score_loss * 100000
     
-    # print(f"Score loss: {score_loss.item()}")
+    # # Cosine Similarity -> Proving to be unstable.
+    # s_flat = (student_score * mask_expanded).view(-1, student_score.shape[-1])
+    # t_flat = (teacher_score_projected * mask_expanded).view(-1, teacher_score_projected.shape[-1])
+    # active_indices = mask.view(-1).bool()
+    # score_loss = 1.0 - F.cosine_similarity(
+    #         s_flat[active_indices],
+    #         t_flat[active_indices],
+    #         dim=-1
+    # ).mean()
+    
+    ## <-- KL Divergence Loss -->
     
     student_flat = student_logits.view(-1, student_logits.size(-1))
     teacher_flat = teacher_logits.detach().view(-1, teacher_logits.size(-1))
@@ -175,3 +180,5 @@ def compute_score_matching_loss(
     total_loss = alpha * score_loss + (1 - alpha) * kd_loss
     
     return total_loss, kd_loss.item(), score_loss.item()
+
+

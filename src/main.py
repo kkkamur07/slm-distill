@@ -3,6 +3,7 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import numpy as np
 from tqdm import tqdm
+import torch.nn as nn
 
 from transformers import AutoTokenizer
 from transformers import DataCollatorForLanguageModeling
@@ -44,6 +45,9 @@ def main(cfg: DictConfig):
     teacher = TeacherModel(model_path=cfg.paths.teacher_model_path, device=device)
     tokenizer = AutoTokenizer.from_pretrained(cfg.paths.teacher_model_path, use_fast = True)
     
+    # Adding the score projection layer.
+    projection = nn.Linear(768, 128, bias=False)
+    
     logger.info(f"Teacher model loaded from {cfg.paths.teacher_model_path} with {teacher.get_num_parameters():,} parameters of which {teacher.get_num_trainable_parameters():,} are trainable")
     
     # Create student model
@@ -63,7 +67,7 @@ def main(cfg: DictConfig):
     
     logger.info(f"Student model created with parameters:{student.get_num_parameters():,} total, {student.get_trainable_parameters():,} trainable")
 
-    student = torch.compile(student)
+    # student = torch.compile(student)
     
     # Load the datasets
     logger.info("Loading training dataset")
@@ -123,8 +127,10 @@ def main(cfg: DictConfig):
     logger.info(f"DataLoaders created")
     
     # Optimizer
-    optimizer = AdamW(
-        student.parameters(),
+    optimizer = AdamW([
+        {'params': student.parameters()},
+        {'params': projection.parameters()}
+    ], 
         lr=cfg.training.learning_rate,
         betas=(0.9, 0.999),
         eps=cfg.training.eps,
@@ -135,6 +141,7 @@ def main(cfg: DictConfig):
     trainer = DistillationTrainer(
         student=student,
         teacher=teacher,
+        score_projection=projection,
         train_loader=train_loader,
         val_loader=val_loader,
         optimizer=optimizer,

@@ -20,6 +20,7 @@ class DistillationTrainer:
         student,
         teacher,
         train_loader,
+        score_projection,
         val_loader,
         optimizer,
         cfg: DictConfig, 
@@ -28,6 +29,7 @@ class DistillationTrainer:
     ):
         self.student = student.to(device)
         self.teacher = teacher.to(device)
+        self.score_projection = score_projection.to(device)
         
         if hasattr(self.student, "device"):
             self.student.device = device
@@ -67,7 +69,8 @@ class DistillationTrainer:
             start_step, last_val_loss = self.checkpoint_manager.load_last(
                 model=self.student,
                 optimizer=self.optimizer,
-                scheduler=self.scheduler
+                scheduler=self.scheduler,
+                projection=self.score_projection
             )
             
             self.global_step = start_step
@@ -126,6 +129,7 @@ class DistillationTrainer:
             loss, kl_loss, score_loss = compute_score_matching_loss(
                 student_model=self.student,
                 teacher_model=self.teacher,
+                score_projection=self.score_projection,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
@@ -301,7 +305,8 @@ class DistillationTrainer:
                             scheduler=self.scheduler,
                             step=self.global_step,
                             val_loss=val_metrics['val_loss'],
-                            config=self.cfg
+                            config=self.cfg,
+                            projection=self.score_projection
                         )
                     
                     # Stop if max steps reached
