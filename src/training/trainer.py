@@ -65,18 +65,29 @@ class DistillationTrainer:
             logger=logger
         )
         
-        try : 
-            start_step, last_val_loss = self.checkpoint_manager.load_last(
-                model=self.student,
-                optimizer=self.optimizer,
-                scheduler=self.scheduler,
-                projection=self.score_projection
-            )
+        if cfg.training.load_from_checkpoint:
+            try : 
+                start_step, last_val_loss = self.checkpoint_manager.load_last(
+                    model=self.student,
+                    optimizer=self.optimizer,
+                    scheduler=self.scheduler,
+                    projection=self.score_projection
+                )
             
-            self.global_step = start_step
-            self.last_val_loss = last_val_loss
+                self.global_step = start_step
+                self.last_val_loss = last_val_loss
+                
+                if self.logger :
+                    self.logger.info(f"Resumed from checkpoint at step {self.global_step} with val loss {self.last_val_loss:.4f}")  
         
-        except FileNotFoundError:
+            except FileNotFoundError:
+                if self.logger :
+                    self.logger.info("No checkpoint found. Starting fresh training.")
+                self.global_step = 0
+                self.last_val_loss = float('inf')
+        else : 
+            if self.logger :
+                self.logger.info("Checkpoint loading skipped. Starting fresh training.")
             self.global_step = 0
             self.last_val_loss = float('inf')
         

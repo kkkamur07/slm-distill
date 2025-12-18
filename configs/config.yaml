@@ -1,6 +1,6 @@
 # Names
 names:
-  experiment_name: "XLM_MLM_distillation_hindi"
+  experiment_name: "XLM_ScoreDistillation_Hindi"
   model_name: "student_XLM"
 
 # Teacher Model
@@ -34,13 +34,13 @@ data:
 # Training
 training:
   temperature: 2
-  alpha: 0.65
-  learning_rate: 3e-4
-  warmup_steps: 2000
-  total_steps: 100000
-  batch_size: 12
+  alpha: 0.20
+  learning_rate: 0.001
+  warmup_steps: 2500
+  total_steps: 55000
+  batch_size: 20
   grad_accum_steps: 4
-  weight_decay: 0.1
+  weight_decay: 0.01
   max_grad_norm: 1.0
   mixed_precision: true
   betas: [0.9, 0.999]
@@ -50,7 +50,8 @@ training:
   save_every: 1000
   keep_last_k: 2
   mlm_probability: 0.15
-  epochs: 3
+  epochs: 2
+  load_from_checkpoint: true
 
 # Hardware
 hardware:
@@ -59,6 +60,7 @@ hardware:
 # Paths
 paths:
   checkpoint_dir: "outputs/checkpoints/${names.experiment_name}"
+  # checkpoint_dir: "${hydra:runtime.output_dir}/checkpoints"  
   log_dir: "outputs/logs"
   output_dir: "outputs/${names.experiment_name}"
   teacher_model_path: "${teacher.model_path}"
