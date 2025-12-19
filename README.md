@@ -68,3 +68,9 @@ In addition to this Read_me summary, we have also created a short motivation, su
 python3 -m src.main -m --config-name=sweep_config
 nohup python3 -m src.main -m --config-name=sweep_config > sweep.log 2>&1 &
 ```
+
+If you are doing sweep i.e. abaltion studies, then make sure that you check the configs throughly
+1. The total steps should be less than 10000 for CE loss and 5000 for score based losses because saying from previous training experience, they seem to converge mostly and set epoch to null
+2. The optimzer should not include optimizing the score based projections, created a different set of optimizers for that
+3. Make sure you return best_val_loss if you are doing sweep. 
+4. Set the load_from_checkpoint to false and the checkpoint directory to something else, already commented.

@@ -17,3 +17,4 @@ logs/
 .pytest_cache/
 dataset/
 .DS_Store
+multirun/
