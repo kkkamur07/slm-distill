@@ -62,3 +62,9 @@ We believe in:
 ---
 
 In addition to this Read_me summary, we have also created a short motivation, summary and outline for the project [in this google document](https://docs.google.com/document/d/1GsuYQtNDsrcAVk2r7jYUC8pDGk-cSKnhXMTzKyyU_NM/edit?tab=t.0).
+
+### Command for running sweep using optuna
+```python
+python3 -m src.main -m --config-name=sweep_config
+nohup python3 -m src.main -m --config-name=sweep_config > sweep.log 2>&1 &
+```

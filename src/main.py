@@ -39,14 +39,11 @@ def main(cfg: DictConfig):
     device = torch.device(cfg.hardware.device if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")  
 
-    logger.info("🔧 Loading models...")
+    logger.info("Loading models...")
     
     # Load teacher model & tokenizer
     teacher = TeacherModel(model_path=cfg.paths.teacher_model_path, device=device)
     tokenizer = AutoTokenizer.from_pretrained(cfg.paths.teacher_model_path, use_fast = True)
-    
-    # Adding the score projection layer.
-    projection = nn.Linear(768, 128, bias=False)
     
     logger.info(f"Teacher model loaded from {cfg.paths.teacher_model_path} with {teacher.get_num_parameters():,} parameters of which {teacher.get_num_trainable_parameters():,} are trainable")
     
@@ -67,7 +64,7 @@ def main(cfg: DictConfig):
     
     logger.info(f"Student model created with parameters:{student.get_num_parameters():,} total, {student.get_trainable_parameters():,} trainable")
 
-    # student = torch.compile(student)
+    student = torch.compile(student)
     
     # Load the datasets
     logger.info("Loading training dataset")
@@ -126,16 +123,29 @@ def main(cfg: DictConfig):
     
     logger.info(f"DataLoaders created")
     
+    # # Optimizer
+    # score_optimizer = AdamW([
+    #     {'params': student.parameters()},
+    #     {'params': projection.parameters()}
+    # ], 
+    #     lr=cfg.training.learning_rate,
+    #     betas=(0.9, 0.999),
+    #     eps=cfg.training.eps,
+    #     weight_decay=cfg.training.weight_decay,
+    # )
+    
     # Optimizer
-    optimizer = AdamW([
+    ce_optimizer = AdamW([
         {'params': student.parameters()},
-        {'params': projection.parameters()}
     ], 
         lr=cfg.training.learning_rate,
         betas=(0.9, 0.999),
         eps=cfg.training.eps,
         weight_decay=cfg.training.weight_decay,
     )
+    
+    # Adding the score projection layer based on teacher d_model
+    projection = nn.Linear(768, 128, bias=False)
     
     # Create trainer
     trainer = DistillationTrainer(
@@ -144,7 +154,7 @@ def main(cfg: DictConfig):
         score_projection=projection,
         train_loader=train_loader,
         val_loader=val_loader,
-        optimizer=optimizer,
+        optimizer=ce_optimizer,
         cfg=cfg,
         device=device,
         logger=logger
@@ -152,15 +162,15 @@ def main(cfg: DictConfig):
     
     trainer.train()
     
-    # For sweep
-    # best_val_loss = trainer.checkpoint_manager.best_val_loss
+    #For sweep
+    best_val_loss = trainer.checkpoint_manager.best_val_loss
     
     # Close logger
     logger.close()
     
     print("Training complete!")
     
-    # return best_val_loss  # For sweep
+    return best_val_loss  # For sweep
     
 
 if __name__ == "__main__":

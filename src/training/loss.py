@@ -1,4 +1,5 @@
 """Distillation loss functions"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -89,6 +90,7 @@ def compute_score_matching_loss(
     
     valid_count = mask.float().sum()
     
+    # Score matching loss won't support flash attention
     with torch.backends.cuda.sdp_kernel(
         enable_flash=False,
         enable_math=True,
@@ -96,7 +98,6 @@ def compute_score_matching_loss(
     ):
         
         # Compute teacher scores
-
         teacher_emb = teacher_model.model.get_input_embeddings()(input_ids.to(teacher_model.device))
         teacher_emb_grad = teacher_emb.detach().requires_grad_(True)
         
@@ -107,7 +108,6 @@ def compute_score_matching_loss(
         )
         teacher_logits = teacher_outputs.logits
         
-         #! Should I use the logsoftmax here instead ? 
         teacher_log_Z = torch.logsumexp(teacher_logits, dim=-1) 
         teacher_objective = (teacher_log_Z * mask.float()).sum() / valid_count # Only calculate for the masked positions
         
@@ -121,7 +121,6 @@ def compute_score_matching_loss(
         teacher_score_projected = score_projection(teacher_score.to(student_model.device)) 
         
         # Compute student scores
-        
         student_emb = student_model.model.get_input_embeddings()(input_ids.to(student_model.device))
         student_emb_grad = student_emb.detach().requires_grad_(True)
         
@@ -132,7 +131,6 @@ def compute_score_matching_loss(
         )
         student_logits = student_outputs.logits
         
-        #! Should I use the logsoftmax here instead ? 
         student_log_Z = torch.logsumexp(student_logits, dim=-1)
         student_objective = (student_log_Z * mask.float().to(student_model.device)).sum() / valid_count
         
@@ -149,17 +147,7 @@ def compute_score_matching_loss(
     # MSE Loss
     score_diff = ((student_score - teacher_score_projected) ** 2) * mask_expanded.to(student_model.device)
     score_loss = score_diff.sum() / (mask_expanded.sum() * student_score.shape[-1])
-    score_loss = score_loss * 100000
-    
-    # # Cosine Similarity -> Proving to be unstable.
-    # s_flat = (student_score * mask_expanded).view(-1, student_score.shape[-1])
-    # t_flat = (teacher_score_projected * mask_expanded).view(-1, teacher_score_projected.shape[-1])
-    # active_indices = mask.view(-1).bool()
-    # score_loss = 1.0 - F.cosine_similarity(
-    #         s_flat[active_indices],
-    #         t_flat[active_indices],
-    #         dim=-1
-    # ).mean()
+    score_loss = score_loss * 100000 # Stabilization factor
     
     ## <-- KL Divergence Loss -->
     
