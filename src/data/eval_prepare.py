@@ -1,3 +1,28 @@
+"""Helper functions for preparing evaluation datasets.
+
+This module provides utilities to load and prepare parquet data for evaluation
+with masked language modeling. It includes:
+- ParquetTextDataset: Simple dataset class for loading parquet files
+- prepare_datasets: Convenience function to create DataLoader with MLM collation
+
+Used primarily for quick evaluation and testing during development.
+
+Example:
+    >>> from transformers import AutoTokenizer
+    >>> from src.data.eval_prepare import prepare_datasets
+    >>> 
+    >>> tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-base")
+    >>> eval_loader = prepare_datasets(
+    ...     tokenizer=tokenizer,
+    ...     data_path="eval_data.parquet",
+    ...     max_length=128,
+    ...     batch_size=32
+    ... )
+    >>> for batch in eval_loader:
+    ...     # Process evaluation batch
+    ...     pass
+"""
+
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 from transformers import DataCollatorForLanguageModeling

@@ -1,3 +1,29 @@
+"""Basic evaluation metrics for masked language models.
+
+This module provides the core evaluation function for assessing model performance:
+- evaluate: Computes perplexity, loss, and accuracy on validation data
+  - Cross-entropy loss on masked tokens
+  - Perplexity calculation
+  - Token-level accuracy
+
+Used during training for validation and model selection based on
+performance metrics.
+
+Example:
+    >>> from src.evals.evals import evaluate
+    >>> 
+    >>> # Evaluate model on validation set
+    >>> metrics = evaluate(
+    ...     model=student_model,
+    ...     eval_loader=val_loader,
+    ...     device=torch.device("cuda")
+    ... )
+    >>> 
+    >>> print(f"Validation Loss: {metrics['loss']:.4f}")
+    >>> print(f"Perplexity: {metrics['perplexity']:.2f}")
+    >>> print(f"Accuracy: {metrics['accuracy']:.2%}")
+"""
+
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm

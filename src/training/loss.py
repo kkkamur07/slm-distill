@@ -1,4 +1,34 @@
-"""Distillation loss functions"""
+"""Distillation loss functions for knowledge transfer.
+
+This module implements various loss functions for distillation:
+- distillation_loss: Combined KL divergence and cross-entropy loss
+- compute_score_matching_loss: Score matching based distillation loss
+
+The losses support:
+- Temperature scaling for soft targets
+- Alpha balancing between distillation and task losses
+- Masked token prediction (ignoring padding)
+- Projection layers for score matching
+
+These losses enable effective knowledge transfer from teacher to student models.
+
+Example:
+    >>> from src.training.loss import distillation_loss
+    >>> import torch
+    >>> 
+    >>> student_logits = torch.randn(2, 128, 250002)  # (batch, seq, vocab)
+    >>> teacher_logits = torch.randn(2, 128, 250002)
+    >>> labels = torch.randint(0, 250002, (2, 128))
+    >>> 
+    >>> loss, kd_loss, ce_loss = distillation_loss(
+    ...     student_logits=student_logits,
+    ...     teacher_logits=teacher_logits,
+    ...     labels=labels,
+    ...     temperature=2.0,
+    ...     alpha=0.5
+    ... )
+    >>> print(f"Total loss: {loss.item():.4f}")
+"""
 
 import torch
 import torch.nn as nn

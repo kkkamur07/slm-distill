@@ -1,3 +1,38 @@
+"""Main distillation trainer with training and validation loops.
+
+This module implements the DistillationTrainer class which orchestrates:
+- Training loop with multiple loss types (KD, CE, score matching)
+- Validation evaluation
+- Gradient accumulation and mixed precision training
+- Learning rate scheduling
+- Checkpointing (best and last models)
+- Metrics logging and tracking
+- Early stopping based on validation loss
+
+The trainer supports both cross-entropy based distillation and score matching
+based distillation with flexible hyperparameter configuration.
+
+Example:
+    >>> from src.training.trainer import DistillationTrainer
+    >>> from torch.optim import AdamW
+    >>> 
+    >>> trainer = DistillationTrainer(
+    ...     student=student_model,
+    ...     teacher=teacher_model,
+    ...     train_loader=train_loader,
+    ...     val_loader=val_loader,
+    ...     score_projection=projection_layer,
+    ...     optimizer=optimizer,
+    ...     cfg=config,
+    ...     device=torch.device("cuda"),
+    ...     logger=logger
+    ... )
+    >>> 
+    >>> # Train the model
+    >>> best_val_loss = trainer.train()
+    >>> print(f"Best validation loss: {best_val_loss:.4f}")
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

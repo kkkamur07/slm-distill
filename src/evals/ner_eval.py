@@ -1,3 +1,34 @@
+"""Named Entity Recognition evaluation for distilled models.
+
+This module evaluates fine-tuned models on NER tasks:
+- compute_ner_accuracy: Token-level NER performance metrics
+  - Accuracy, F1, Precision, Recall
+  - Proper word-to-token alignment
+  - Support for various NER tagging schemes
+
+Used to assess whether the distilled student model maintains the teacher's
+capability on downstream NER tasks in the target language.
+
+Example:
+    >>> from src.evals.ner_eval import compute_ner_accuracy
+    >>> 
+    >>> sentences = [["राम", "दिल्ली", "में", "रहते", "हैं"], [...]]
+    >>> labels = [[1, 2, 0, 0, 0], [...]]  # 0=O, 1=B-PER, 2=B-LOC
+    >>> 
+    >>> metrics = compute_ner_accuracy(
+    ...     model=ner_model,
+    ...     tokenizer=tokenizer,
+    ...     sentences=sentences,
+    ...     labels=labels,
+    ...     device="cuda",
+    ...     batch_size=32,
+    ...     max_length=128
+    ... )
+    >>> 
+    >>> print(f"NER Accuracy: {metrics['accuracy']:.2%}")
+    >>> print(f"Macro F1: {metrics['macro_f1']:.4f}")
+"""
+
 from typing import List, Dict
 import torch
 from tqdm import tqdm

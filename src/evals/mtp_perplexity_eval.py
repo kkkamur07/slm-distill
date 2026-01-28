@@ -1,3 +1,42 @@
+"""Masked token prediction evaluation metrics.
+
+This module provides comprehensive evaluation for masked language modeling:
+- compute_masked_token_accuracy: Accuracy on masked tokens
+- compare_student_teacher_masked_token_agreement: Student-teacher agreement rate
+- compute_masked_token_perplexity: Perplexity on masked positions
+- masked_token_kl: KL divergence between student and teacher distributions
+
+These metrics help assess:
+- Model performance on the MLM task
+- Knowledge transfer quality from teacher to student
+- Distribution alignment between models
+
+Example:
+    >>> from src.evals.mtp_perplexity_eval import (
+    ...     compute_masked_token_accuracy,
+    ...     compare_student_teacher_masked_token_agreement
+    ... )
+    >>> 
+    >>> # Evaluate student model
+    >>> student_acc = compute_masked_token_accuracy(
+    ...     model=student_model,
+    ...     tokenizer=tokenizer,
+    ...     eval_loader=eval_loader,
+    ...     device="cuda"
+    ... )
+    >>> 
+    >>> # Compare student and teacher
+    >>> agreement = compare_student_teacher_masked_token_agreement(
+    ...     student=student_model,
+    ...     teacher=teacher_model,
+    ...     tokenizer=tokenizer,
+    ...     eval_loader=eval_loader,
+    ...     device="cuda"
+    ... )
+    >>> print(f"Student accuracy: {student_acc:.2%}")
+    >>> print(f"Student-Teacher agreement: {agreement:.2%}")
+"""
+
 import math
 import torch
 import torch.nn.functional as F

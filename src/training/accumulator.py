@@ -1,3 +1,36 @@
+"""Gradient accumulation and automatic mixed precision utilities.
+
+This module provides the AmpGrad class for efficient training:
+- Gradient accumulation to simulate larger batch sizes
+- Automatic mixed precision (AMP) for faster training on CUDA
+- Gradient scaling to prevent underflow with fp16
+- Memory-efficient training for large models
+
+The class wraps the optimizer and handles:
+- Scaled backward passes
+- Accumulated gradient updates
+- Automatic unscaling before optimizer step
+
+Example:
+    >>> from src.training.accumulator import AmpGrad
+    >>> from torch.optim import AdamW
+    >>> 
+    >>> optimizer = AdamW(model.parameters(), lr=1e-4)
+    >>> amp_grad = AmpGrad(
+    ...     optimizer=optimizer,
+    ...     accum=4,  # Accumulate gradients over 4 steps
+    ...     amp=True   # Use automatic mixed precision
+    ... )
+    >>> 
+    >>> for batch in train_loader:
+    ...     with torch.autocast(device_type='cuda', dtype=torch.float16):
+    ...         loss = model(batch)
+    ...     amp_grad.backward(loss)
+    ...     if amp_grad.should_step():
+    ...         amp_grad.step()
+    ...         amp_grad.zero_grad()
+"""
+
 import torch
 
 class AmpGrad:

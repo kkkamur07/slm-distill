@@ -1,3 +1,35 @@
+"""Training logging and metrics tracking utilities.
+
+This module provides the TrainingLogger class for comprehensive logging:
+- Dual logging to file and console
+- Structured metrics logging in JSONL format
+- Timestamped log files per experiment
+- Capture of print statements
+- Metrics aggregation and summary statistics
+
+The logger helps track training progress, debug issues, and maintain
+a complete record of experiments for reproducibility.
+
+Example:
+    >>> from src.training.logging import TrainingLogger
+    >>> 
+    >>> logger = TrainingLogger(
+    ...     log_dir="outputs/logs",
+    ...     experiment_name="hindi_distill_v1"
+    ... )
+    >>> 
+    >>> logger.info("Starting training...")
+    >>> logger.log_metrics({
+    ...     "step": 100,
+    ...     "loss": 2.45,
+    ...     "learning_rate": 0.0001,
+    ...     "perplexity": 11.6
+    ... })
+    >>> 
+    >>> # Get summary statistics
+    >>> summary = logger.get_metrics_summary()
+"""
+
 import sys
 import logging
 from pathlib import Path

@@ -1,3 +1,27 @@
+"""Main entry point for knowledge distillation training.
+
+This module orchestrates the entire distillation pipeline for compressing multilingual
+models (XLM-RoBERTa) to monolingual models. It handles:
+- Model initialization (teacher and student)
+- Data loading and preprocessing
+- Training loop with various distillation losses (KD, CE, score matching)
+- Evaluation and checkpointing
+- Hyperparameter optimization via Hydra
+
+Example:
+    Basic training:
+        $ python -m src.main
+    
+    Hyperparameter sweep with Optuna:
+        $ python -m src.main -m --config-name=sweep_config
+    
+    Override specific config parameters:
+        $ python -m src.main training.learning_rate=1e-4 training.batch_size=32
+    
+    Background execution:
+        $ nohup python -m src.main -m --config-name=sweep_config > sweep.log 2>&1 &
+"""
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import torch

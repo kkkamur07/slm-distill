@@ -1,3 +1,31 @@
+"""Teacher model wrapper for knowledge distillation.
+
+This module provides a wrapper around pre-trained XLM-RoBERTa models to serve as
+the teacher in the distillation process. Features:
+- Loads pre-trained XLM-RoBERTa models
+- All parameters are frozen (no training)
+- Always operates in eval mode
+- Provides logits for distillation loss computation
+
+The teacher model guides the student during pre-training, allowing for higher
+compression ratios while maintaining performance.
+
+Example:
+    >>> from src.models.teacher_model import TeacherModel
+    >>> import torch
+    >>> 
+    >>> # Load pre-trained XLM-RoBERTa as teacher
+    >>> teacher = TeacherModel(
+    ...     model_path="xlm-roberta-base",
+    ...     device=torch.device("cuda")
+    ... )
+    >>> 
+    >>> # Get teacher logits (no gradients computed)
+    >>> input_ids = torch.randint(0, 250002, (2, 128)).cuda()
+    >>> teacher_logits = teacher(input_ids=input_ids, return_logits=True)
+    >>> print(f"Parameters: {teacher.get_num_parameters():,}")  # ~270M
+"""
+
 import torch
 import torch.nn as nn
 from transformers import XLMRobertaForMaskedLM

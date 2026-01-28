@@ -1,3 +1,34 @@
+"""Sentiment analysis evaluation for distilled models.
+
+This module evaluates models on sentiment classification:
+- compute_sentiment_accuracy: Sentiment classification metrics
+  - Accuracy for positive/negative/neutral sentiment
+  - Macro and micro F1 scores
+  - Precision and recall
+
+Used to assess whether the distilled model maintains sentiment understanding
+capabilities in the target language.
+
+Example:
+    >>> from src.evals.sentiment_eval import compute_sentiment_accuracy
+    >>> 
+    >>> texts = ["यह फिल्म बहुत अच्छी है!", "बुरी फिल्म थी।", ...]
+    >>> labels = [1, 0, ...]  # 0=negative, 1=positive
+    >>> 
+    >>> metrics = compute_sentiment_accuracy(
+    ...     model=sentiment_model,
+    ...     tokenizer=tokenizer,
+    ...     texts=texts,
+    ...     labels=labels,
+    ...     device="cuda",
+    ...     batch_size=32,
+    ...     max_length=128
+    ... )
+    >>> 
+    >>> print(f"Sentiment Accuracy: {metrics['accuracy']:.2%}")
+    >>> print(f"Macro F1: {metrics['macro_f1']:.4f}")
+"""
+
 import torch
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score

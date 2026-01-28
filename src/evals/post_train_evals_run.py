@@ -1,3 +1,36 @@
+"""Post-training evaluation orchestrator.
+
+This module coordinates comprehensive post-training evaluations:
+- run_mtp_eval: Runs all masked token prediction evaluations
+  - Student vs teacher accuracy comparison
+  - Agreement rates between models
+  - Perplexity measurements
+  - KL divergence analysis
+
+Provides a unified interface for running multiple evaluation metrics
+and saving results to JSON for analysis and comparison.
+
+Example:
+    >>> from src.evals.post_train_evals_run import run_mtp_eval
+    >>> 
+    >>> results = run_mtp_eval(
+    ...     teacher=teacher_model,
+    ...     student=student_model,
+    ...     tokenizer=tokenizer,
+    ...     data_path="eval_data.parquet",
+    ...     seed=42,
+    ...     max_length=128,
+    ...     batch_size=32,
+    ...     log_path="outputs/eval_results.json",
+    ...     device="cuda"
+    ... )
+    >>> 
+    >>> print(f"Teacher Accuracy: {results['teacher_accuracy']:.2%}")
+    >>> print(f"Student Accuracy: {results['student_accuracy']:.2%}")
+    >>> print(f"Agreement: {results['agreement']:.2%}")
+    >>> print(f"KL Divergence: {results['kl_div']:.4f}")
+"""
+
 import json, random
 from pathlib import Path
 

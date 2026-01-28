@@ -1,3 +1,36 @@
+"""Natural Language Inference evaluation for distilled models.
+
+This module evaluates models on NLI classification tasks:
+- compute_nli_accuracy: NLI performance metrics
+  - Accuracy for entailment/contradiction/neutral classification
+  - Macro and micro F1 scores
+  - Precision and recall
+
+Used to verify that the distilled model retains reasoning capabilities
+for inference tasks in the target language.
+
+Example:
+    >>> from src.evals.nli_eval import compute_nli_accuracy
+    >>> 
+    >>> premises = ["एक आदमी किताब पढ़ रहा है।", ...]
+    >>> hypotheses = ["वह पढ़ रहा है।", ...]
+    >>> labels = [0, 1, 2, ...]  # 0=entailment, 1=neutral, 2=contradiction
+    >>> 
+    >>> metrics = compute_nli_accuracy(
+    ...     model=nli_model,
+    ...     tokenizer=tokenizer,
+    ...     premises=premises,
+    ...     hypotheses=hypotheses,
+    ...     labels=labels,
+    ...     device="cuda",
+    ...     batch_size=32,
+    ...     max_length=128
+    ... )
+    >>> 
+    >>> print(f"NLI Accuracy: {metrics['accuracy']:.2%}")
+    >>> print(f"Macro F1: {metrics['macro_f1']:.4f}")
+"""
+
 import torch
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score

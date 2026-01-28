@@ -1,3 +1,35 @@
+"""Student model definition for knowledge distillation.
+
+This module defines the StudentModel class, a compressed version of XLM-RoBERTa
+designed for monolingual tasks. The model:
+- Uses fewer layers and smaller hidden dimensions than the teacher
+- Supports gradient checkpointing for memory efficiency
+- Compatible with masked language modeling
+- Typically 8-20x smaller than the teacher model
+
+The architecture is configurable via parameters to allow experimentation with
+different compression ratios and model sizes.
+
+Example:
+    >>> from src.models.student_model import StudentModel
+    >>> import torch
+    >>> 
+    >>> # Create a small student model (33M parameters)
+    >>> student = StudentModel(
+    ...     vocab_size=250002,
+    ...     hidden_size=256,
+    ...     num_hidden_layers=6,
+    ...     num_attention_heads=8,
+    ...     intermediate_size=1024,
+    ...     device=torch.device("cuda")
+    ... )
+    >>> 
+    >>> # Forward pass
+    >>> input_ids = torch.randint(0, 250002, (2, 128)).cuda()
+    >>> logits = student(input_ids=input_ids, return_logits=True)
+    >>> print(logits.shape)  # torch.Size([2, 128, 250002])
+"""
+
 import torch
 import torch.nn as nn
 from transformers import XLMRobertaForMaskedLM, XLMRobertaConfig

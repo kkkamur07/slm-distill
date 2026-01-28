@@ -9,6 +9,84 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License"/>
 </div>
 
+## 🚀 Getting Started
+
+### Repository Structure
+
+The `src/` directory contains all the core modules for the distillation pipeline:
+
+- **`src/main.py`**: Main entry point for training and distillation
+- **`src/data/`**: Data loading and preprocessing modules
+  - `nativeSLM.py`: Dataset class for loading and tokenizing parquet files
+  - `eval_prepare.py`: Helper functions for preparing evaluation datasets
+- **`src/models/`**: Teacher and student model definitions
+  - `teacher_model.py`: XLM-RoBERTa teacher model wrapper
+  - `student_model.py`: Compressed student model architecture
+- **`src/training/`**: Training utilities and components
+  - `trainer.py`: Main distillation trainer with training loop
+  - `loss.py`: Distillation loss functions (KD, CE, score matching)
+  - `scheduler.py`: Learning rate schedulers
+  - `logging.py`: Training logging and metrics tracking
+  - `checkpointing.py`: Model checkpoint management
+  - `accumulator.py`: Gradient accumulation and AMP utilities
+- **`src/evals/`**: Evaluation and benchmarking modules
+  - `evals.py`: Basic perplexity and accuracy evaluation
+  - `mtp_perplexity_eval.py`: Masked token prediction evaluation
+  - `ner_eval.py`: Named Entity Recognition evaluation
+  - `nli_eval.py`: Natural Language Inference evaluation
+  - `sentiment_eval.py`: Sentiment analysis evaluation
+  - `post_train_evals_run.py`: Post-training evaluation orchestrator
+
+### Setup
+
+1. **Clone the repository**:
+```bash
+git clone <repository-url>
+cd slm-distill
+```
+
+2. **Create and activate virtual environment**:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On macOS/Linux
+# or
+.venv\Scripts\activate  # On Windows
+```
+
+3. **Install dependencies**:
+```bash
+uv sync
+```
+
+4. **Configure your experiment**:
+Edit `configs/config.yaml` to set your paths, hyperparameters, and model configurations.
+
+### Running the Project
+
+#### Basic Training
+Run the distillation training with default configuration:
+```bash
+python -m src.main
+```
+
+#### Hyperparameter Optimization
+Run hyperparameter sweep using Optuna (multi-run mode):
+```bash
+python -m src.main -m --config-name=sweep_config
+```
+
+For background execution:
+```bash
+nohup python -m src.main -m --config-name=sweep_config > sweep.log 2>&1 &
+```
+
+#### Configuration Options
+- Use `configs/config.yaml` for single training runs
+- Use `configs/sweep_config.yaml` for hyperparameter optimization
+- All configurations are managed via Hydra
+
+---
+
 We are currently trying to do distillation of multilingual models to mono lingual ones starting with hindi langauge. This distillation happens during pre-training so the teacher now sort of acts as a guide during pre-training and thus we can have higher compression ratios as well. 
 
 The current progress is that we have pretrained distilled a `Hindi` model from `XLMRobertaBase` with comopression ratio of around 8x and further improving it to 20x so that we can have a mono lingual model which performs as good as `XLMRoberta` for low resource and moderate resource languages. 

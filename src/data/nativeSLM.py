@@ -1,4 +1,30 @@
-"""Simple dataset class for parquet data"""
+"""Dataset class for loading and tokenizing parquet files for distillation training.
+
+This module provides the NativeSLMData class which handles:
+- Loading multiple parquet files from a directory
+- Tokenization with caching support
+- Train/validation splitting
+- Memory-efficient processing of large datasets
+- Integration with PyTorch DataLoader
+
+The dataset class supports caching tokenized data to disk to avoid repeated
+tokenization across training runs.
+
+Example:
+    >>> from transformers import AutoTokenizer
+    >>> from torch.utils.data import DataLoader
+    >>> from src.data.nativeSLM import NativeSLMData
+    >>> 
+    >>> tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-base")
+    >>> train_dataset = NativeSLMData(
+    ...     data_path="/path/to/parquet/files",
+    ...     tokenizer=tokenizer,
+    ...     max_length=512,
+    ...     train=True,
+    ...     cache_dir="./cache"
+    ... )
+    >>> train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+"""
 
 import os
 import pandas as pd

@@ -1,3 +1,41 @@
+"""Model checkpoint management for training.
+
+This module provides utilities for saving and loading model checkpoints:
+- save_checkpoint: Save model, optimizer, scheduler state
+- load_checkpoint: Restore training from saved checkpoint
+- Automatic best model tracking based on validation loss
+- Support for score projection layers
+- Model state, optimizer state, and training step preservation
+
+Checkpointing enables:
+- Training resumption after interruptions
+- Model deployment of best performing checkpoint
+- Experiment reproducibility
+
+Example:
+    >>> from src.training.checkpointing import save_checkpoint, load_checkpoint
+    >>> 
+    >>> # Save checkpoint
+    >>> save_checkpoint(
+    ...     model=student_model,
+    ...     optimizer=optimizer,
+    ...     scheduler=scheduler,
+    ...     step=5000,
+    ...     out_dir="outputs/checkpoints",
+    ...     val_loss=2.34,
+    ...     is_best=True,
+    ...     logger=logger
+    ... )
+    >>> 
+    >>> # Load checkpoint
+    >>> checkpoint = load_checkpoint(
+    ...     ckpt_path="outputs/checkpoints/model_best.pt",
+    ...     model=student_model,
+    ...     optimizer=optimizer,
+    ...     scheduler=scheduler
+    ... )
+"""
+
 from __future__ import annotations
 import os
 from pathlib import Path
