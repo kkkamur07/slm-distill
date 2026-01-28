@@ -1,7 +1,5 @@
 ### Pretrain Distilling Mono-lingual models
 
-<img src="assets/genImage.png" alt="SLM Distill Banner" width="80%"/>
-
 <div align="center">
   <img src="https://img.shields.io/badge/Model-33M_params-blue" alt="Model Size"/>
   <img src="https://img.shields.io/badge/Compression-8x-green" alt="Compression"/>
@@ -96,6 +94,21 @@ The current progress is that we have pretrained distilled a `Hindi` model from `
 We are currently getting `perplexity` of around 18 on hindi and XLM Roberta base gets around 5 and we will close this gap soon and setup more robust evaluations pipeline in the future with suprising things as the model gives us perplexity in english to be around 50 while the XLM Robert Base has around 2 same, so essentially the model is forgetting things in english. 
 
 We have currently trained it on 100M tokens of hindi
+
+## 📊 Results
+
+Our pre-trained distilled model has been evaluated on three downstream tasks to assess its capability in understanding Hindi language:
+
+<div align="center">
+  <img src="assets/image.png" alt="Evaluation Results" width="90%"/>
+</div>
+
+The evaluation results demonstrate the model's performance across:
+- **NLI (Natural Language Inference)**: Tests the model's ability to understand relationships between premise and hypothesis sentences
+- **Sentiment Analysis**: Measures accuracy in classifying text sentiment (positive/negative/neutral)
+- **NER (Named Entity Recognition)**: Evaluates the model's capability to identify and classify named entities in Hindi text
+
+These benchmarks provide insights into how well the distilled 33M parameter model retains the knowledge from the larger XLM-RoBERTa teacher model across various language understanding tasks.
 
 ### Future improvements : 
 - [X] Robust Evaluations pipeline
