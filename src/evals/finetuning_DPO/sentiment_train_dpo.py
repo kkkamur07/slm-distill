@@ -4,14 +4,8 @@ from typing import List, Optional, Dict, Any
 import torch
 from torch import nn
 from torch.optim import AdamW
-from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
-from transformers import (
-    AutoConfig,
-    XLMRobertaForSequenceClassification,
-    PreTrainedModel,
-    get_linear_schedule_with_warmup,
-)
+from transformers import AutoConfig, XLMRobertaForSequenceClassification, PreTrainedModel
 
 from src.evals.sentiment_eval import compute_sentiment_accuracy
 
@@ -87,8 +81,6 @@ def train_sentiment_model(
     early_stopping_patience: Optional[int],
     min_delta: float,
     eval_on_dev: bool = True,
-    warmup_steps: int | None = None,
-    label_smoothing: float = 0.0,
 ) -> Dict[str, Any]:
     """Train a sentiment classifier with optional dev-based early stopping.
 
@@ -97,29 +89,11 @@ def train_sentiment_model(
       - "history": per-epoch loss and dev metrics
       - "batch_history": per-batch training loss (for later visualisation)
     """
-    def _optimizer_for(model: nn.Module):
-        decay, no_decay = [], []
-        for name, param in model.named_parameters():
-            if not param.requires_grad:
-                continue
-            if name.endswith("bias") or "layernorm" in name.lower():
-                no_decay.append(param)
-            else:
-                decay.append(param)
-        groups = []
-        if decay:
-            groups.append({"params": decay, "weight_decay": weight_decay})
-        if no_decay:
-            groups.append({"params": no_decay, "weight_decay": 0.0})
-        return AdamW(groups, lr=learning_rate, weight_decay=0.0)
-
     model.to(device)
-    optimizer = _optimizer_for(model)
-    total_steps = (len(train_texts) + batch_size - 1) // batch_size * num_epochs
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=warmup_steps or 0,
-        num_training_steps=max(total_steps, 1),
+    optimizer = AdamW(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
     )
 
     n_train = len(train_texts)
@@ -165,18 +139,11 @@ def train_sentiment_model(
             enc = {k: v.to(device) for k, v in enc.items()}
             labels = torch.tensor(batch_y, dtype=torch.long, device=device)
 
-            outputs = model(**enc)
-            logits = outputs.logits
-            loss = torch.nn.functional.cross_entropy(
-                logits,
-                labels,
-                label_smoothing=label_smoothing,
-            )
+            outputs = model(**enc, labels=labels)
+            loss = outputs.loss
 
             loss.backward()
-            clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            scheduler.step()
 
             loss_val = float(loss.item())
             epoch_loss += loss_val
@@ -261,3 +228,105 @@ def train_sentiment_model(
         "best_dev_metrics": best_dev_metrics,
         "best_epoch": best_epoch,
     }
+
+
+def train_sentiment_model_score(
+    model: nn.Module,
+    tokenizer,
+    train_texts: List[str],
+    train_labels: List[int],
+    device: str,
+    num_epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    max_length: int,
+    weight_decay: float,
+    baseline: bool = True,
+    lambda_ce: float = 0.9,
+) -> Dict[str, Any]:
+    """Hybrid CE + policy-gradient training with reward = correctness (0/1).
+
+    Loss: lambda_ce * CE + (1 - lambda_ce) * REINFORCE(policy loss).
+    The RL part uses a self-critical baseline (greedy reward) if enabled.
+    """
+    model.to(device)
+    optimizer = AdamW(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
+
+    n_train = len(train_texts)
+    history: List[Dict[str, Any]] = []
+    print(f"\n[Sentiment][Score] Starting score-based training on {n_train} examples...")
+
+    for epoch in range(1, num_epochs + 1):
+        model.train()
+        epoch_loss = 0.0
+        num_batches = 0
+
+        idxs = torch.randperm(n_train).tolist()
+
+        for start in tqdm(
+            range(0, n_train, batch_size),
+            desc=f"[Sentiment][Score] Epoch {epoch}/{num_epochs}",
+        ):
+            batch_indices = idxs[start : start + batch_size]
+            if not batch_indices:
+                continue
+
+            batch_texts = [train_texts[i] for i in batch_indices]
+            batch_y = torch.tensor(
+                [train_labels[i] for i in batch_indices], dtype=torch.long, device=device
+            )
+
+            enc = tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt",
+            )
+            enc = {k: v.to(device) for k, v in enc.items()}
+
+            optimizer.zero_grad()
+            logits = model(**enc).logits  # (bs, num_labels)
+            log_probs = torch.log_softmax(logits, dim=-1)
+
+            # sample labels
+            samples = torch.distributions.Categorical(logits=logits).sample()
+            sampled_logp = log_probs.gather(1, samples.view(-1, 1)).squeeze(1)
+
+            reward = (samples == batch_y).float()
+            if baseline:
+                with torch.no_grad():
+                    greedy = logits.argmax(dim=-1)
+                    base = (greedy == batch_y).float()
+            else:
+                base = torch.zeros_like(reward)
+
+            advantage = reward - base
+            rl_loss = -(advantage * sampled_logp).mean()
+
+            ce_loss = torch.nn.functional.cross_entropy(
+                logits,
+                batch_y,
+            )
+
+            loss = lambda_ce * ce_loss + (1.0 - lambda_ce) * rl_loss
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += float(loss.item())
+            num_batches += 1
+
+        avg_loss = epoch_loss / max(num_batches, 1)
+        history.append(
+            {
+                "epoch": epoch,
+                "loss": avg_loss,
+            }
+        )
+        print(f"[Sentiment][Score] Epoch {epoch}: hybrid loss = {avg_loss:.4f}")
+
+    return {"model": model, "history": history}

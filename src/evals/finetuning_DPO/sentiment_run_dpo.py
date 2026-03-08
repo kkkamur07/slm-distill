@@ -5,30 +5,23 @@ from transformers import AutoTokenizer, PreTrainedModel
 
 from src.evals.sentiment_eval import compute_sentiment_accuracy
 from src.evals.task_finetuning.sentiment_data import load_sentiment_csv
-from src.evals.task_finetuning.sentiment_train import (
+from src.evals.finetuning_DPO.sentiment_train_dpo import (
     create_sentiment_classifier,
     train_sentiment_model,
+    train_sentiment_model_score,
 )
 
 
 def run_sentiment(
     num_labels: int,
+    num_epochs: int,
     batch_size: int,
     max_length: int,
     device: str | None,
     weight_decay: float,
+    early_stopping_patience: int | None,
+    lr_grid: list[float] | None,
     dropout: float,
-    num_epochs: int | None = None,
-    teacher_num_epochs: int | None = None,
-    student_num_epochs: int | None = None,
-    early_stopping_patience: int | None = None,
-    teacher_lr_grid: list[float] | None = None,
-    student_lr_grid: list[float] | None = None,
-    lr_grid: list[float] | None = None,
-    teacher_patience: int | None = None,
-    student_patience: int | None = None,
-    warmup_steps: int | None = None,
-    label_smoothing: float = 0.0,
     min_delta: float = 1e-5,
     train_path: str = "data/hin/sentiment_hi_train.csv",
     val_path: str = "data/hin/sentiment_hi_val.csv",
@@ -42,22 +35,8 @@ def run_sentiment(
     student_score_model: PreTrainedModel | None = None,
     tokenizer=None,
 ):
-    if teacher_lr_grid is None:
-        teacher_lr_grid = lr_grid
-    if student_lr_grid is None:
-        student_lr_grid = lr_grid
-    if not teacher_lr_grid:
-        raise ValueError("teacher_lr_grid must be non-empty.")
-    if not student_lr_grid:
-        raise ValueError("student_lr_grid must be non-empty.")
-    base_epochs = num_epochs or teacher_num_epochs or student_num_epochs
-    if base_epochs is None:
-        raise ValueError("Provide num_epochs or per-model epochs.")
-    teacher_epochs = teacher_num_epochs or base_epochs
-    student_epochs = student_num_epochs or base_epochs
-    base_patience = early_stopping_patience
-    teacher_pat = teacher_patience if teacher_patience is not None else base_patience
-    student_pat = student_patience if student_patience is not None else base_patience
+    if not lr_grid:
+        raise ValueError("lr_grid must be a non-empty list of learning rates.")
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -109,13 +88,7 @@ def run_sentiment(
         subfolder=None,
     )
 
-    def grid_search_model(
-        model_template,
-        label: str,
-        lr_grid: list[float],
-        epochs: int,
-        patience: int | None,
-    ):
+    def grid_search_model(model_template, label: str):
         best_acc = -1.0
         best_model = None
         best_lr = None
@@ -137,16 +110,14 @@ def run_sentiment(
                 dev_texts=val_texts,
                 dev_labels=val_labels,
                 device=device,
-                num_epochs=epochs,
+                num_epochs=num_epochs,
                 batch_size=batch_size,
                 learning_rate=lr,
                 max_length=max_length,
                 weight_decay=weight_decay,
-                early_stopping_patience=patience,
+                early_stopping_patience=early_stopping_patience,
                 min_delta=min_delta,
                 eval_on_dev=True,
-                warmup_steps=warmup_steps,
-                label_smoothing=label_smoothing,
             )
 
             model_trained = res["model"]
@@ -188,49 +159,93 @@ def run_sentiment(
             print(f"[Sentiment] Best dev metrics for '{label}': {best_dev_summary}")
         return best_model, best_lr, best_history, best_batch_history, best_dev_summary
 
-    # Teacher model grid search
+    def grid_search_score(model_template, label: str):
+        best_acc = -1.0
+        best_model = None
+        best_lr = None
+        best_history = None
+        for lr in lr_grid:
+            print(f"\n[Sentiment][Score] Fine-tuning '{label}' with lr={lr:.1e}...")
+            model = copy.deepcopy(model_template)
+            res = train_sentiment_model_score(
+                model=model,
+                tokenizer=tokenizer,
+                train_texts=train_texts,
+                train_labels=train_labels,
+                device=device,
+                num_epochs=num_epochs,
+                batch_size=batch_size,
+                learning_rate=lr,
+                max_length=max_length,
+                weight_decay=weight_decay,
+                lambda_ce=0.9,
+            )
+            trained = res["model"]
+            history = res["history"]
+
+            # evaluate on val to pick best lr
+            dev_metrics = compute_sentiment_accuracy(
+                trained,
+                tokenizer,
+                val_texts,
+                val_labels,
+                device=device,
+                batch_size=batch_size,
+                max_length=max_length,
+            )
+            dev_acc = dev_metrics["accuracy"]
+            print(
+                f"[Sentiment][Score] lr={lr:.1e} -> dev accuracy={dev_acc:.4f} "
+                f"(macro-F1={dev_metrics['macro_f1']:.4f})"
+            )
+            if dev_acc > best_acc:
+                best_acc = dev_acc
+                best_model = trained
+                best_lr = lr
+                best_history = history
+                best_dev = dev_metrics
+        if best_model is None:
+            raise RuntimeError(f"No score-based model trained for {label}")
+        print(
+            f"[Sentiment][Score] Best lr for '{label}' is {best_lr:.1e} "
+            f"with dev accuracy={best_acc:.4f}"
+        )
+        return best_model, best_lr, best_history, None, best_dev
+
+    # Teacher model grid search (score-based)
     (
         teacher,
         best_lr_teacher,
         teacher_history,
         teacher_batch_history,
         teacher_best_dev,
-    ) = grid_search_model(
+    ) = grid_search_score(
         teacher_template,
         "teacher",
-        teacher_lr_grid,
-        teacher_epochs,
-        teacher_pat,
     )
 
-    # Student CE model grid search
+    # Student CE model grid search (score-based)
     (
         student_ce,
         best_lr_student_ce,
         student_ce_history,
         student_ce_batch_history,
         student_ce_best_dev,
-    ) = grid_search_model(
+    ) = grid_search_score(
         student_ce_template,
         "student_ce",
-        student_lr_grid,
-        student_epochs,
-        student_pat,
     )
 
-    # Student SCORE model grid search
+    # Student SCORE model grid search (score-based)
     (
         student_score,
         best_lr_student_score,
         student_score_history,
         student_score_batch_history,
         student_score_best_dev,
-    ) = grid_search_model(
+    ) = grid_search_score(
         student_score_template,
         "student_score",
-        student_lr_grid,
-        student_epochs,
-        student_pat,
     )
 
     # Final evaluation on test set for the best teacher model

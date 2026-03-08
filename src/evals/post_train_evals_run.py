@@ -36,6 +36,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from transformers import AutoModelForMaskedLM, AutoTokenizer
 
 from src.evals.mtp_perplexity_eval import (
     compute_masked_token_accuracy,
@@ -46,66 +47,126 @@ from src.evals.mtp_perplexity_eval import (
 from src.data.eval_prepare import prepare_datasets
 
 
-def _set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
+def main():
+    """Run masked-token evals for teacher, student_ce, and student_score (finetuning-style)."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    teacher_model_name = "FacebookAI/xlm-roberta-base"
+    student_ce_model_name = "kkkamur07/hindi-xlm-roberta-33M"
+    student_ce_subfolder = "model"
+    student_score_state = Path("checkpoints/score_based_student/model_best.pt")
 
-def run_mtp_eval(
-    teacher,
-    student,
-    tokenizer,
-    data_path: str,
-    seed: int = 42,
-    max_length: int = 128,
-    batch_size: int = 32,
-    log_path: str = "mtp_eval_results.json",
-    device: str | None = None,
-):
-    _set_seed(seed)
+    print("Loading teacher and student models")
+    teacher_base = AutoModelForMaskedLM.from_pretrained(teacher_model_name)
+    student_ce_base = AutoModelForMaskedLM.from_pretrained(
+        student_ce_model_name, subfolder=student_ce_subfolder
+    )
+    if student_score_state.exists():
+        student_score_base = AutoModelForMaskedLM.from_config(
+            copy.deepcopy(student_ce_base.config)
+        )
+        state = torch.load(student_score_state, map_location="cpu", weights_only=False)
+        student_score_base.load_state_dict(state, strict=False)
+        # Reuse the CE head to avoid random initialisation mismatches.
+        if hasattr(student_score_base, "lm_head") and hasattr(student_ce_base, "lm_head"):
+            student_score_base.lm_head.load_state_dict(
+                student_ce_base.lm_head.state_dict(), strict=False
+            )
+        print(f"[Finetuning] Loaded student_score weights from {student_score_state}")
+    else:
+        raise FileNotFoundError(
+            f"Expected student_score weights at {student_score_state} but not found."
+        )
+    shared_tokenizer = AutoTokenizer.from_pretrained(teacher_model_name, use_fast=True)
+
+    
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    teacher.to(device)
-    student.to(device)
+    teacher_base.to(device)
+    student_ce_base.to(device)
+    student_score_base.to(device)
 
     loader = prepare_datasets(
-        tokenizer=tokenizer,
-        data_path=data_path,
-        max_length=max_length,
-        batch_size=batch_size,
+        tokenizer=shared_tokenizer,
+        data_path="data/hin/data-99.parquet",
+        max_length=126,
+        batch_size=16,
     )
 
-    t_acc = compute_masked_token_accuracy(teacher, tokenizer, loader, device)
-    s_acc = compute_masked_token_accuracy(student, tokenizer, loader, device)
-    agree = compare_student_teacher_masked_token_agreement(
-        student, teacher, tokenizer, loader, device
-    )
-    t_res = compute_masked_token_perplexity(teacher, tokenizer, loader, device)
-    s_res = compute_masked_token_perplexity(student, tokenizer, loader, device)
-    kl, kl_tokens = masked_token_kl(student, teacher, loader, device)
+    print("calculating model mtps:")
+    print("calculating teacher mtp:")
+    results_teacher = compute_masked_token_accuracy(teacher_base, shared_tokenizer, loader, device)
+    print(f"Teacher masked accuracy: {results_teacher:.4f}")
+    print("calculating student_ce mtp:")
+    results_student_ce = compute_masked_token_accuracy(student_ce_base, shared_tokenizer, loader, device)
+    print(f"Student_CE masked accuracy: {results_student_ce:.4f}")
+    print("calculating student_score mtp:")
+    results_student_score = compute_masked_token_accuracy(student_score_base, shared_tokenizer, loader, device)
+    print(f"Student_SCORE masked accuracy: {results_student_score:.4f}")
 
-    results = {
-        "seed": seed,
-        "teacher": getattr(teacher.config, "_name_or_path", "teacher"),
-        "student": getattr(student.config, "_name_or_path", "student"),
-        "teacher_accuracy": t_acc,
-        "student_accuracy": s_acc,
-        "agreement": agree["agreement"],
-        "agreement_positions": agree["total"],
-        "teacher_loss": t_res["loss"],
-        "teacher_perplexity": t_res["perplexity"],
-        "teacher_tokens": t_res["tokens"],
-        "student_loss": s_res["loss"],
-        "student_perplexity": s_res["perplexity"],
-        "student_tokens": s_res["tokens"],
-        "kl_teacher_student": kl,
-        "kl_tokens": kl_tokens,
+
+    print("calculating student - teacher mtp agreement:")
+    print("calculating student_ce - teacher agreement:")
+    agreement_student_ce = compare_student_teacher_masked_token_agreement(student_ce_base, teacher_base, shared_tokenizer, loader, device)
+    print("calculating student_score - teacher agreement:")
+    agreement_student_score = compare_student_teacher_masked_token_agreement(student_score_base, teacher_base, shared_tokenizer, loader, device)
+
+    print(f"Student_CE agreement: {agreement_student_ce['agreement']:.4f}")
+    print(f"Student_SCORE agreement: {agreement_student_score['agreement']:.4f}")
+
+    print("calculating perplexities of base models")
+    print("calculating teacher perlexity")
+    teacher_perplexity = compute_masked_token_perplexity(teacher_base, shared_tokenizer, loader, device)
+    print("calculating student_ce perlexity")
+    student_ce_perplexity = compute_masked_token_perplexity(student_ce_base, shared_tokenizer, loader, device)
+    print("calculating student_score perlexity")
+    student_score_perplexity = compute_masked_token_perplexity(student_score_base, shared_tokenizer, loader, device)
+
+    print(f"Teacher perplexity: {teacher_perplexity['perplexity']:.2f}")
+    print(f"Student_CE perplexity: {student_ce_perplexity['perplexity']:.2f}")
+    print(f"Student_SCORE perplexity: {student_score_perplexity['perplexity']:.2f}")
+
+
+    print("calculating KL - metrics")
+    print("calculating teacher - student_ce KL")
+    kl_student_ce, kl_student_ce_tokens = masked_token_kl(student_ce_base, teacher_base, loader, device)
+    print("calculating teacher - student_score KL")
+    kl_student_score, kl_student_score_tokens = masked_token_kl(student_score_base, teacher_base, loader, device)
+
+    print(f"Student_CE KL: {kl_student_ce:.4f} over {kl_student_ce_tokens} tokens")
+    print(f"Student_SCORE KL: {kl_student_score:.4f} over {kl_student_score_tokens} tokens")
+
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    out_dir = Path("results")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"mtp_eval_{timestamp}.json"
+
+    combined = {
+        "teacher": {
+            "name": teacher_model_name,
+            "MTP": results_teacher,
+            "Perplexity": teacher_perplexity,
+        },
+        "student_ce": {
+            "name": student_ce_model_name,
+            "MTP": results_student_ce,
+            "MTP_agreement": agreement_student_ce,
+            "Perplexity": student_ce_perplexity,
+            "KL-divergence": kl_student_ce,
+        },
+        "student_score": {
+            "name": str(student_score_state),
+            "MTP": results_student_score,
+            "MTP_agreement": agreement_student_score,
+            "Perplexity": student_score_perplexity,
+            "KL-divergence": kl_student_score,
+        },
     }
 
-    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(combined, f, indent=2, ensure_ascii=False)
+    
+    print(f"saved results as json here: {out_path}")
 
-    return results
+
+if __name__ == "__main__":
+    main()

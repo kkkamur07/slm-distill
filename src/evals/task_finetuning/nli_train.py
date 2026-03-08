@@ -1,17 +1,45 @@
+import copy
 from typing import List, Dict, Any, Optional
 import torch
 from torch import nn
 from torch.optim import AdamW
+from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
-from transformers import AutoConfig, XLMRobertaForSequenceClassification
+from transformers import (
+    AutoConfig,
+    XLMRobertaForSequenceClassification,
+    PreTrainedModel,
+    get_linear_schedule_with_warmup,
+)
 from src.evals.nli_eval import compute_nli_accuracy
 
 
+def _load_base_weights(model: nn.Module, base_model: PreTrainedModel) -> None:
+    """Load compatible weights from a base model, ignoring mismatched heads."""
+    target_state = model.state_dict()
+    base_state = base_model.state_dict()
+    prefix = getattr(model, "base_model_prefix", "")
+
+    adapted_state = {}
+    for key, tensor in base_state.items():
+        candidates = [key]
+        if prefix and not key.startswith(f"{prefix}."):
+            candidates.append(f"{prefix}.{key}")
+
+        for cand in candidates:
+            if cand in target_state and target_state[cand].shape == tensor.shape:
+                adapted_state[cand] = tensor
+                break
+
+    model.load_state_dict(adapted_state, strict=False)
+
+
 def create_nli_classifier(
-    base_model_name: str,
+    base_model_name: str | None,
     num_labels: int,
     dropout: float | None,
     subfolder: str | None = None,
+    base_model: PreTrainedModel | None = None,
     **model_kwargs,
 ):
     """
@@ -30,10 +58,15 @@ def create_nli_classifier(
     if subfolder is not None:
         config_kwargs["subfolder"] = subfolder
 
-    config = AutoConfig.from_pretrained(
-        base_model_name,
-        **config_kwargs,
-    )
+    if base_model is not None:
+        config = copy.deepcopy(base_model.config)
+    elif base_model_name is not None:
+        config = AutoConfig.from_pretrained(
+            base_model_name,
+            **config_kwargs,
+        )
+    else:
+        raise ValueError("Provide either base_model or base_model_name.")
 
     config.num_labels = num_labels
 
@@ -47,12 +80,16 @@ def create_nli_classifier(
     if subfolder is not None:
         model_kwargs2["subfolder"] = subfolder
 
-    model = XLMRobertaForSequenceClassification.from_pretrained(
-        base_model_name,
-        config=config,
-        ignore_mismatched_sizes=True,
-        **model_kwargs2,
-    )
+    if base_model is not None:
+        model = XLMRobertaForSequenceClassification(config)
+        _load_base_weights(model, base_model)
+    else:
+        model = XLMRobertaForSequenceClassification.from_pretrained(
+            base_model_name,
+            config=config,
+            ignore_mismatched_sizes=True,
+            **model_kwargs2,
+        )
 
     return model
 
@@ -75,6 +112,7 @@ def train_nli_model(
     early_stopping_patience: Optional[int],
     min_delta: float,
     eval_on_dev: bool = True,
+    warmup_steps: int = 0,
 ) -> Dict[str, Any]:
     """
     Inputs:
@@ -88,27 +126,30 @@ def train_nli_model(
           "model": the trained model (restored to best dev checkpoint if early stopping),
           "history": list of {"epoch": int, "train_loss": float, "dev_metrics": dict | None}
     """
-    model.to(device)
-    optimizer = AdamW(
-        model.parameters(),
-        lr=learning_rate,
-        weight_decay=weight_decay,
-    )
-
-    # === DEBUG: track whether classifier weights actually change ===
-    tracked_param_name = "classifier.out_proj.weight"
-    tracked_prev = None
-    with torch.no_grad():
+    def _optimizer_for(model: nn.Module):
+        decay, no_decay = [], []
         for name, param in model.named_parameters():
-            if name == tracked_param_name:
-                tracked_prev = param.detach().clone()
-                print(
-                    f"[DEBUG] Tracking parameter: {tracked_param_name}, "
-                    f"mean abs value = {tracked_prev.abs().mean().item():.6e}"
-                )
-                break
-        if tracked_prev is None:
-            print(f"[DEBUG] Could not find parameter {tracked_param_name} to track.")
+            if not param.requires_grad:
+                continue
+            if name.endswith("bias") or "layernorm" in name.lower():
+                no_decay.append(param)
+            else:
+                decay.append(param)
+        groups = []
+        if decay:
+            groups.append({"params": decay, "weight_decay": weight_decay})
+        if no_decay:
+            groups.append({"params": no_decay, "weight_decay": 0.0})
+        return AdamW(groups, lr=learning_rate, weight_decay=0.0)
+
+    model.to(device)
+    optimizer = _optimizer_for(model)
+    total_steps = (len(train_premises) + batch_size - 1) // batch_size * num_epochs
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=max(int(warmup_steps), 0),
+        num_training_steps=max(total_steps, 1),
+    )
 
     n_train = len(train_premises)
     history: List[Dict[str, Any]] = []
@@ -119,7 +160,9 @@ def train_nli_model(
 
     # early stopping state
     best_dev_acc: Optional[float] = None
+    best_dev_metrics: Optional[Dict[str, Any]] = None
     best_state_dict: Optional[Dict[str, torch.Tensor]] = None
+    best_epoch: Optional[int] = None
     no_improve = 0
 
     for epoch in range(1, num_epochs + 1):
@@ -159,7 +202,9 @@ def train_nli_model(
             loss = outputs.loss
 
             loss.backward()
+            clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            scheduler.step()
           
             loss_val = float(loss.item())
             epoch_loss += loss_val
@@ -204,33 +249,18 @@ def train_nli_model(
             )
 
             # if early_stopping is int (tracks whether progress was achieved)
-            if early_stopping_patience is not None:
-                curr_acc = dev_metrics["accuracy"]
-                if best_dev_acc is None or curr_acc > best_dev_acc + min_delta:
-                    best_dev_acc = curr_acc
-                    # store on CPU to avoid GPU memory growth
-                    best_state_dict = {
-                        k: v.detach().cpu() for k, v in model.state_dict().items()
-                    }
-                    no_improve = 0
-                else:
-                    no_improve += 1
-
-        # === DEBUG: check how much the tracked weights changed this epoch ===
-        if tracked_prev is not None:
-            with torch.no_grad():
-                current = None
-                for name, param in model.named_parameters():
-                    if name == tracked_param_name:
-                        current = param.detach().clone()
-                        break
-                if current is not None:
-                    diff = (current - tracked_prev).abs().mean().item()
-                    print(
-                        f"[DEBUG] Mean abs change in {tracked_param_name} "
-                        f"since last check: {diff:.6e}"
-                    )
-                    tracked_prev = current
+            curr_acc = dev_metrics["accuracy"]
+            if best_dev_acc is None or curr_acc > best_dev_acc + min_delta:
+                best_dev_acc = curr_acc
+                best_dev_metrics = dict(dev_metrics)
+                # store on CPU to avoid GPU memory growth
+                best_state_dict = {
+                    k: v.detach().cpu() for k, v in model.state_dict().items()
+                }
+                best_epoch = epoch
+                no_improve = 0
+            elif early_stopping_patience is not None:
+                no_improve += 1
 
         # record history for this epoch
         history.append(
@@ -255,9 +285,16 @@ def train_nli_model(
         model.load_state_dict(
             {k: v.to(device) for k, v in best_state_dict.items()}
         )
+        if best_epoch is not None:
+            print(
+                f"[NLI] Restored best dev checkpoint from epoch {best_epoch} "
+                f"(accuracy={best_dev_acc:.4f})"
+            )
 
     return {
         "model": model,
         "history": history,
         "batch_history": batch_history,
+        "best_dev_metrics": best_dev_metrics,
+        "best_epoch": best_epoch,
     }
